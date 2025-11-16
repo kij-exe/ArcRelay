@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, existsSync, watch, mkdirSync } from 'fs';
 import path from 'path';
 import { parse as parseYAML } from 'yaml';
 import type { Address } from 'viem';
+import { parseUnits } from 'viem';
 import { decodePaymentHeader, generateNonce } from '../facilitator/eip3009';
 import type {
   EIP3009PaymentPayload,
@@ -296,8 +297,8 @@ function writeDocsManifest(_config: ProxyConfig): void {
 
 function issueNonce(endpoint: LoadedEndpoint): { nonce: `0x${string}`; validAfter: number; validBefore: number } {
   const nonce = generateNonce();
-  const validAfter = Math.floor(Date.now() / 1000);
-  const validBefore = validAfter + endpoint.maxTimeoutSeconds;
+  const validAfter = Math.floor(Date.now() / 1000) - 15; // Start validity 15 seconds ago
+  const validBefore = validAfter + 600; //endpoint.maxTimeoutSeconds;
   cleanupExpiredNonces(validAfter);
   pendingNonces.set(buildNonceKey(endpoint, nonce), { expiresAt: validBefore });
   return { nonce, validAfter, validBefore };
@@ -535,11 +536,19 @@ function createRequirementForNetwork(
   endpoint: LoadedEndpoint,
   metadata: FacilitatorNetworkMetadata
 ): PaymentRequirements {
+  // Convert human price (e.g., "10.0" USDC) to atomic units (USDC has 6 decimals)
+  let amountAtomic = '0';
+  try {
+    const human = (endpoint.price ?? '0').toString();
+    amountAtomic = parseUnits(human, 6).toString();
+  } catch {
+    amountAtomic = '0';
+  }
   return {
     scheme: endpoint.scheme || 'exact',
     network: metadata.network,
     token: metadata.token,
-    amount: endpoint.price,
+    amount: amountAtomic,
     recipient: metadata.recipient,
     description: endpoint.description,
     maxTimeoutSeconds: endpoint.maxTimeoutSeconds,
@@ -667,7 +676,8 @@ async function respondWithPaymentRequired(
     return {
       scheme: requirements.scheme,
       network: requirements.network,
-      maxAmountRequired: requirements.amount,
+      // Present human-readable price to clients (not atomic units)
+      maxAmountRequired: endpoint.price,
       resource: `${endpoint.method} ${endpoint.originalPath}`,
       description: endpoint.description,
       mimeType: 'application/json',

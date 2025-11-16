@@ -1,7 +1,6 @@
 import type { Address } from 'viem';
 import type { SupportedNetwork, SupportedScheme, X402PaymentRequirement } from '../facilitator/payments';
 import { PaymentOfferMissingError, UnexpectedResponseError, WalletNotConfiguredError } from './errors';
-import { X402DocsRepository, type DocsSource } from './docs';
 import { base64Payload } from './payload';
 import { signEIP712PayloadPrivateKey, signEIP712PayloadWallet } from './signing';
 import type {
@@ -28,7 +27,7 @@ interface PreparePayloadParams {
   };
   fetcher: FetchLike;
   docsEntry?: ResolvedEndpointDoc | null | undefined;
-  docsRepo?: X402DocsRepository | undefined;
+  docsRepo?: any | undefined;
   defaultValiditySeconds?: number | undefined;
   domainOverride?: PreparedEIP712Payload['domain'] | undefined;
   networkOverride?: SupportedNetwork | undefined;
@@ -38,7 +37,8 @@ interface PreparePayloadParams {
 }
 
 export interface X402SdkOptions {
-  docs: DocsSource | X402DocsRepository;
+  // docs is optional; when omitted, callers must provide docsEntry/docsResolver/domainOverride
+  docs?: unknown;
   fetch?: FetchLike;
   defaultValiditySeconds?: number;
   payerAddress?: Address;
@@ -48,7 +48,7 @@ export interface X402SdkOptions {
 
 // High-level helper that strings together pricing lookup, EIP-712 creation, signing, and paid fetches.
 export class X402Sdk {
-  private readonly docsRepo: X402DocsRepository;
+  private readonly docsRepo: any | undefined;
   private readonly fetcher: FetchLike;
   private readonly defaultValiditySeconds: number;
   private readonly staticPayer: Address | undefined;
@@ -56,7 +56,7 @@ export class X402Sdk {
   private walletSigner: (WalletTypedDataSigner & { getAddress?: () => Promise<Address> }) | undefined;
 
   constructor(options: X402SdkOptions) {
-    this.docsRepo = options.docs instanceof X402DocsRepository ? options.docs : new X402DocsRepository(options.docs, options.fetch);
+    this.docsRepo = options.docs;
     this.fetcher = resolveFetch(options.fetch);
     this.defaultValiditySeconds = options.defaultValiditySeconds ?? DEFAULT_VALIDITY_SECONDS;
     this.staticPayer = options.payerAddress;
@@ -80,10 +80,7 @@ export class X402Sdk {
     const requestInit = buildRequestInit(overrides);
     const payerAddress = overrides?.payerAddress ?? (await this.resolvePayerAddress());
     const customDocsEntry = overrides?.docsEntry ?? (overrides?.docsResolver ? await overrides.docsResolver() : undefined);
-    const docsEntry =
-      typeof customDocsEntry === 'undefined' || customDocsEntry === null
-        ? await this.docsRepo.getEndpoint(endpointUrl, requestInit.method)
-        : customDocsEntry;
+    const docsEntry = typeof customDocsEntry === 'undefined' ? null : customDocsEntry;
 
     return prepareEIP712Payload({
       endpointUrl,
@@ -154,17 +151,13 @@ export function createX402Sdk(options: X402SdkOptions): X402Sdk {
 // Stateless helper mirroring the class method for users who just need one-off payloads.
 export async function generateEIP712Payload(
   endpointUrl: string,
-  docs: DocsSource | X402DocsRepository,
+  _docs: unknown,
   options: GenerateEIP712PayloadOptions & { fetch?: FetchLike }
 ): Promise<PreparedEIP712Payload> {
   const fetcher = resolveFetch(options.fetch);
   const requestInit = buildRequestInit(options);
-  const repo = docs instanceof X402DocsRepository ? docs : new X402DocsRepository(docs, options.fetch);
   const customDocsEntry = options.docsEntry ?? (options.docsResolver ? await options.docsResolver() : undefined);
-  const docsEntry =
-    typeof customDocsEntry === 'undefined' || customDocsEntry === null
-      ? await repo.getEndpoint(endpointUrl, requestInit.method)
-      : customDocsEntry;
+  const docsEntry = typeof customDocsEntry === 'undefined' ? null : customDocsEntry;
 
   if (!options.payerAddress) {
     throw new WalletNotConfiguredError();
@@ -177,7 +170,7 @@ export async function generateEIP712Payload(
     requestInit,
     fetcher,
     docsEntry,
-    docsRepo: repo,
+    docsRepo: undefined,
     defaultValiditySeconds: options.defaultValiditySeconds,
     domainOverride: options.domainOverride,
     networkOverride: options.networkOverride,
@@ -291,7 +284,7 @@ async function prepareEIP712Payload(params: PreparePayloadParams): Promise<Prepa
     from: payerAddress,
     to: payTo,
     value,
-    validAfter: `${issuedAt}`,
+    validAfter: `${issuedAt - 15}`, // Start validity 15 seconds ago to account for clock skew
     validBefore: `${issuedAt + timeoutSeconds}`,
     nonce,
   };

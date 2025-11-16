@@ -508,7 +508,27 @@ app.post("/settle", async (req: Request, res: Response) => {
     });
   } catch (error) {
     const err = error instanceof Error ? error.message : "Settlement failed";
-    res.status(400).json({ error: err });
+
+    // Capture detailed Circle API error for debugging
+    const axiosError = (error as any)?.response;
+    if (axiosError) {
+      console.error('[facilitator] Circle API error:', {
+        status: axiosError.status,
+        statusText: axiosError.statusText,
+        data: axiosError.data,
+        headers: axiosError.headers,
+        requestData: (error as any)?.config?.data,
+      });
+    } else {
+      console.error('[facilitator] Settlement error:', error);
+    }
+
+    // Return detailed error info
+    res.status(400).json({
+      error: err,
+      details: axiosError?.data || {},
+      circleStatus: axiosError?.status,
+    });
   }
 });
 

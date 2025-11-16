@@ -27,10 +27,20 @@ interface BalancesResponse {
 
 // Request shape is constructed inline in the API call
 
-interface WithdrawalResponse {
+interface GatewayTransferRequest {
+  amount: string;
+  destinationAddress: string;
+  chain: string;
+  network: string;
+  sourceWallets?: string[];
+}
+
+interface GatewayTransferResponse {
   success: boolean;
   transactionId?: string;
   error?: string;
+  attestation?: string;
+  txHash?: string;
 }
 
 interface Transaction {
@@ -79,6 +89,7 @@ const withdrawalSchema = z.object({
     },
       { message: "Amount must be at least 0.000001 USDC" }
     ),
+  sourceWallets: z.array(z.string()).optional(),
 });
 
 type WithdrawalFormData = z.infer<typeof withdrawalSchema>;
@@ -149,19 +160,36 @@ export default function WithdrawPage() {
     setValue("amount", maxAmount, { shouldValidate: true });
   };
 
-  // Withdrawal mutation
+  // Function to convert form chain value to API chain/network format
+  const parseChainAndNetwork = (chainValue: string): { chain: string; network: string } => {
+    const chainMap: Record<string, { chain: string; network: string }> = {
+      "ARC-TESTNET": { chain: "ARC", network: "Testnet" },
+      "BASE-SEPOLIA": { chain: "Base", network: "Sepolia" },
+      "ETH-SEPOLIA": { chain: "ETH", network: "Sepolia" },
+    };
+    return chainMap[chainValue] || { chain: "Base", network: "Sepolia" };
+  };
+
+  // Gateway Transfer mutation
   const withdrawalMutation = useMutation({
-    mutationFn: async (data: WithdrawalFormData): Promise<WithdrawalResponse> => {
+    mutationFn: async (data: WithdrawalFormData): Promise<GatewayTransferResponse> => {
       const token = getToken();
       if (!token) throw new Error("Not authenticated");
-      return apiFetch<WithdrawalResponse>("/withdraw", {
+
+      const { chain, network } = parseChainAndNetwork(data.destinationChain);
+
+      const requestBody: GatewayTransferRequest = {
+        amount: data.amount,
+        destinationAddress: data.destinationAddress,
+        chain,
+        network,
+        // sourceWallets is optional - let the backend select the optimal wallets
+      };
+
+      return apiFetch<GatewayTransferResponse>("/gateway/transfer", {
         token,
         method: "POST",
-        body: JSON.stringify({
-          destinationChain: data.destinationChain,
-          destinationAddress: data.destinationAddress,
-          amount: data.amount,
-        }),
+        body: JSON.stringify(requestBody),
       });
     },
     onSuccess: () => {
@@ -327,10 +355,13 @@ export default function WithdrawPage() {
             <div className="mt-4 rounded-lg bg-green-50 p-4 text-sm text-green-800">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4" />
-                <span>Withdrawal initiated successfully</span>
+                <span>Gateway transfer initiated successfully</span>
               </div>
               {withdrawalMutation.data?.transactionId && (
                 <p className="mt-2 text-xs">Transaction ID: {withdrawalMutation.data.transactionId}</p>
+              )}
+              {withdrawalMutation.data?.txHash && (
+                <p className="mt-1 text-xs">Transaction Hash: {withdrawalMutation.data.txHash}</p>
               )}
             </div>
           )}
