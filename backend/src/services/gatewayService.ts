@@ -1,6 +1,15 @@
 import { circleClient } from './circleClient';
 import { randomBytes } from 'node:crypto';
-import { pad, maxUint256, zeroAddress, defineChain } from 'viem';
+import {
+  pad,
+  maxUint256,
+  zeroAddress,
+  defineChain,
+  createWalletClient,
+  createPublicClient,
+  http,
+} from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia, sepolia } from 'viem/chains';
 
 // ---------------------------------------------------------------------------
@@ -166,6 +175,26 @@ function parseUsdcAmountToBaseUnits(amount: string): bigint {
 }
 
 /**
+ * Parse a native token decimal string (typically 18 decimals) into base units.
+ * Examples (18 decimals):
+ *  "1"          -> 1_000000000000000000n
+ *  "0.0000001"  -> 100000000000000n
+ */
+function parseNativeAmountToBaseUnits(amount: string, decimals = 18): bigint {
+  const trimmed = amount.trim();
+  if (!trimmed) return 0n;
+
+  const [intPartRaw, fracPartRaw = ''] = trimmed.split('.');
+  const intPart = intPartRaw.replace(/[^0-9]/g, '') || '0';
+  const fracPartPadded = (
+    fracPartRaw.replace(/[^0-9]/g, '') + '0'.repeat(decimals)
+  ).slice(0, decimals);
+
+  const full = `${intPart}${fracPartPadded}`;
+  return BigInt(full);
+}
+
+/**
  * Query all user wallets and their USDC balances
  */
 export async function getWalletsForWalletSet(
@@ -188,7 +217,8 @@ export async function getWalletsForWalletSet(
 }
 
 export async function queryUserBalances(
-  walletSetId: string
+  walletSetId: string,
+  allowedBlockchains?: string[]
 ): Promise<TokenBalance[]> {
   const wallets = await getWalletsForWalletSet(walletSetId);
 
@@ -200,6 +230,10 @@ export async function queryUserBalances(
 
   for (const wallet of wallets) {
     try {
+      if (allowedBlockchains && !allowedBlockchains.includes(wallet.blockchain)) {
+        continue;
+      }
+
       const tb = await getWalletUsdcBalance(wallet);
       if (tb) {
         balances.push(tb);
@@ -210,6 +244,115 @@ export async function queryUserBalances(
   }
 
   return balances;
+}
+
+/**
+ * Prefund a Circle wallet with native gas for a single contract execution
+ * (e.g. approve or deposit) on EVM testnets, using the relayer account.
+ */
+async function prefundForContractExecution(
+  walletId: string,
+  blockchain: string,
+  opts: {
+    contractAddress: string;
+    abiFunctionSignature: string;
+    abiParameters: (string | number | boolean)[];
+  }
+): Promise<void> {
+  // Only ETH-based testnets need native token for gas
+  if (blockchain !== 'ETH-SEPOLIA' && blockchain !== 'BASE-SEPOLIA') {
+    return;
+  }
+
+  const domainConfig = getDomainConfigByBlockchain(blockchain);
+  if (!domainConfig) return;
+
+  const relayerPrivateKey = process.env.RELAYER_PRIVATE_KEY;
+  if (!relayerPrivateKey) {
+    console.warn('[Gateway][prefund] RELAYER_PRIVATE_KEY not configured, skipping prefund');
+    return;
+  }
+
+  // Resolve wallet address
+  const walletResp = await circleClient.getWallet({ id: walletId });
+  const walletAddress = walletResp.data?.wallet?.address as `0x${string}` | undefined;
+  if (!walletAddress) {
+    throw new Error(`Unable to resolve wallet address for walletId=${walletId}`);
+  }
+
+  // Estimate fee via Circle's estimate API
+  let estimatedFee = 0n;
+  try {
+    const feeResp: any = await (circleClient as any).estimateContractExecutionFee({
+      walletId,
+      contractAddress: opts.contractAddress,
+      abiFunctionSignature: opts.abiFunctionSignature,
+      abiParameters: opts.abiParameters,
+    });
+    // Circle returns separate fee levels; we use "medium" to align with feeLevel=MEDIUM
+    const medium = feeResp.data?.medium;
+    const feeStr: string | undefined =
+      medium?.networkFeeRaw ?? medium?.networkFee;
+
+    if (!feeStr) {
+      console.warn(
+        `[Gateway][prefund] No medium.networkFee/medium.networkFeeRaw in estimate response for ${opts.abiFunctionSignature}`,
+        feeResp.data
+      );
+      return;
+    }
+
+    estimatedFee = parseNativeAmountToBaseUnits(feeStr, 18);
+  } catch (err) {
+    console.warn(
+      `[Gateway][prefund] Failed to estimate fee for ${opts.abiFunctionSignature}, skipping prefund`,
+      err
+    );
+    return;
+  }
+
+  if (estimatedFee === 0n) {
+    console.warn(
+      `[Gateway][prefund] Estimated native fee is 0 for ${opts.abiFunctionSignature}, skipping prefund`
+    );
+    return;
+  }
+
+  // Add a safety buffer (e.g., +50%)
+  const bufferFactorNum = 3n;
+  const bufferFactorDen = 2n;
+  const amountToSend = (estimatedFee * bufferFactorNum) / bufferFactorDen;
+
+  const relayerAccount = privateKeyToAccount(relayerPrivateKey as `0x${string}`);
+  const walletClient: any = createWalletClient({
+    account: relayerAccount,
+    chain: domainConfig.viemChain,
+    transport: http(),
+  });
+  const publicClient = createPublicClient({
+    chain: domainConfig.viemChain,
+    transport: http(),
+  });
+
+  console.log(
+    `[Gateway][prefund] walletId=${walletId} blockchain=${blockchain} ` +
+      `tx=${opts.abiFunctionSignature} valueWei=${amountToSend.toString()}`
+  );
+
+  const hash = await walletClient.sendTransaction({
+    chain: domainConfig.viemChain,
+    account: relayerAccount,
+    to: walletAddress,
+    value: amountToSend,
+  });
+
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+  if (receipt.status !== 'success') {
+    throw new Error(
+      `[Gateway][prefund] Prefund transaction failed for wallet=${walletAddress} tx=${hash} status=${receipt.status}`
+    );
+  }
 }
 
 /**
@@ -317,7 +460,7 @@ async function waitForTransactionConfirmed(
   transactionId: string,
   options?: { maxAttempts?: number; pollIntervalMs?: number }
 ): Promise<void> {
-  const maxAttempts = options?.maxAttempts ?? 40; // ~16 seconds at 40*400ms
+  const maxAttempts = options?.maxAttempts ?? 80; // ~   seconds at 80*400ms
   const pollIntervalMs = options?.pollIntervalMs ?? 400;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -375,50 +518,93 @@ export async function depositToGateway(
   console.log(
     `[Gateway][depositToGateway] walletId=${walletId} blockchain=${blockchain} token=${tokenAddress} amountBase=${amount.toString()} amount=${humanAmount} (USDC)`
   );
+  const maxRetries = 3;
 
-  // Step 1: Approve USDC spending to Gateway contract
-  // Call ERC20 approve(token, amount) function
-  const approveTx = await circleClient.createContractExecutionTransaction({
-    walletId,
-    contractAddress: tokenAddress,
-    abiFunctionSignature: 'approve(address,uint256)',
-    abiParameters: [GATEWAY_WALLET_ADDRESS, amount.toString()],
-    fee: {
-      type: 'level',
-      config: {
-        feeLevel: 'MEDIUM',
+  // Step 1: Approve USDC spending to Gateway contract with retries
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Prefund for APPROVE on each attempt
+    await prefundForContractExecution(walletId, blockchain, {
+      contractAddress: tokenAddress,
+      abiFunctionSignature: 'approve(address,uint256)',
+      abiParameters: [GATEWAY_WALLET_ADDRESS, amount.toString()],
+    });
+
+    const approveTx = await circleClient.createContractExecutionTransaction({
+      walletId,
+      contractAddress: tokenAddress,
+      abiFunctionSignature: 'approve(address,uint256)',
+      abiParameters: [GATEWAY_WALLET_ADDRESS, amount.toString()],
+      fee: {
+        type: 'level',
+        config: {
+          feeLevel: 'MEDIUM',
+        },
       },
-    },
-  });
-  if (!approveTx.data?.id) {
-    throw new Error('Failed to create approval transaction');
+    });
+
+    if (!approveTx.data?.id) {
+      throw new Error('Failed to create approval transaction');
+    }
+
+    try {
+      await waitForTransactionConfirmed(approveTx.data.id);
+      break;
+    } catch (err: any) {
+      const msg = String(err?.message ?? '');
+      console.error(
+        `[Gateway][approve] attempt=${attempt} failed for tx=${approveTx.data.id}: ${msg}`
+      );
+      // Retry only on FAILED; other states or timeouts bubble up
+      if (!msg.includes('state=FAILED') || attempt === maxRetries) {
+        throw err;
+      }
+    }
   }
 
-  // Wait for approval transaction to be confirmed on-chain
-  await waitForTransactionConfirmed(approveTx.data.id);
+  // Step 2: Call Gateway deposit() function using contract execution with retries
+  let lastDepositTxId: string | undefined;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // Prefund for DEPOSIT on each attempt (after approve)
+    await prefundForContractExecution(walletId, blockchain, {
+      contractAddress: domainConfig.walletContractAddress,
+      abiFunctionSignature: 'deposit(address,uint256)',
+      abiParameters: [tokenAddress, amount.toString()],
+    });
 
-  // Step 2: Call Gateway deposit() function using contract execution
-  const depositTx = await circleClient.createContractExecutionTransaction({
-    walletId,
-    contractAddress: domainConfig.walletContractAddress,
-    abiFunctionSignature: 'deposit(address,uint256)',
-    abiParameters: [tokenAddress, amount.toString()],
-    fee: {
-      type: 'level',
-      config: {
-        feeLevel: 'MEDIUM',
+    const depositTx = await circleClient.createContractExecutionTransaction({
+      walletId,
+      contractAddress: domainConfig.walletContractAddress,
+      abiFunctionSignature: 'deposit(address,uint256)',
+      abiParameters: [tokenAddress, amount.toString()],
+      fee: {
+        type: 'level',
+        config: {
+          feeLevel: 'MEDIUM',
+        },
       },
-    },
-  });
+    });
 
-  if (!depositTx.data?.id) {
-    throw new Error('Failed to create deposit transaction');
+    if (!depositTx.data?.id) {
+      throw new Error('Failed to create deposit transaction');
+    }
+
+    lastDepositTxId = depositTx.data.id;
+
+    try {
+      await waitForTransactionConfirmed(lastDepositTxId);
+      break;
+    } catch (err: any) {
+      const msg = String(err?.message ?? '');
+      console.error(
+        `[Gateway][deposit] attempt=${attempt} failed for tx=${lastDepositTxId}: ${msg}`
+      );
+      if (!msg.includes('state=FAILED') || attempt === maxRetries) {
+        throw err;
+      }
+    }
   }
 
-  // Wait for deposit transaction to be confirmed on-chain
-  await waitForTransactionConfirmed(depositTx.data.id);
-
-  return depositTx.data.id;
+  return lastDepositTxId as string;
 }
 
 /**

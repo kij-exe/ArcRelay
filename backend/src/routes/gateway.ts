@@ -15,7 +15,7 @@ import {
   GATEWAY_DOMAIN_CONFIGS,
   getDomainConfigByBlockchain,
 } from '../services/gatewayService';
-import { createPublicClient, getContract, http } from 'viem';
+import { createPublicClient, createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 interface AuthenticatedRequest extends Request {
@@ -31,6 +31,12 @@ const gatewayTransferSchema = z.object({
   destinationAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid address format'),
   chain: z.enum(['Base', 'Ethereum', 'ARC']),
   network: z.enum(['Sepolia', 'Testnet']),
+  /**
+   * Optional list of source wallets to use for funding the transfer.
+   * Format: "Chain:Network", e.g. "Base:Sepolia", "ARC:Testnet"
+   * If omitted, all user wallets are considered.
+   */
+  sourceWallets: z.array(z.enum(['Ethereum:Sepolia', 'Base:Sepolia', 'ARC:Testnet'])).optional(),
 });
 
 router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthRequest, res: Response) => {
@@ -42,11 +48,12 @@ router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthReques
     }
 
     const userUuid = authReq.userUuid;
-    const { amount, destinationAddress, chain, network } = req.body as {
+    const { amount, destinationAddress, chain, network, sourceWallets } = req.body as {
       amount: string;
       destinationAddress: string;
       chain: 'Base' | 'Ethereum' | 'ARC';
       network: 'Sepolia' | 'Testnet';
+      sourceWallets?: Array<'Ethereum:Sepolia' | 'Base:Sepolia' | 'ARC:Testnet'>;
     };
 
     // Get user and verify wallet set exists
@@ -69,9 +76,30 @@ router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthReques
     }
     const destinationBlockchain = destinationConfig.blockchain;
 
+    // Resolve optional source wallets into allowed Circle blockchain identifiers
+    let allowedBlockchains: string[] | undefined;
+    if (sourceWallets && sourceWallets.length > 0) {
+      const configs = sourceWallets
+        .map((key) => GATEWAY_DOMAIN_CONFIGS[key])
+        .filter((c): c is (typeof GATEWAY_DOMAIN_CONFIGS)[string] => Boolean(c));
+
+      if (configs.length === 0) {
+        res.status(400).json({
+          error: 'No valid sourceWallets provided',
+        });
+        return;
+      }
+
+      allowedBlockchains = Array.from(new Set(configs.map((c) => c.blockchain)));
+    }
+
     // Step 1: Query user balances
-    console.log(`[Gateway] Step 1: Querying balances for user ${userUuid}`);
-    const balances = await queryUserBalances(user.circle_wallet_set_id);
+    console.log(
+      `[Gateway] Step 1: Querying balances for user ${userUuid} (sources=${allowedBlockchains?.join(
+        ','
+      ) || 'ALL'})`
+    );
+    const balances = await queryUserBalances(user.circle_wallet_set_id, allowedBlockchains);
     
     if (balances.length === 0) {
       res.status(400).json({ error: 'No USDC balances found in user wallets' });
@@ -176,9 +204,9 @@ async function mintOnDestinationChain(
     throw new Error(`Unsupported destination blockchain: ${destinationBlockchain}`);
   }
 
-  const client = createPublicClient({
-    chain: chainConfig.viemChain,
+  const client = createWalletClient({
     account: relayerAccount,
+    chain: chainConfig.viemChain,
     transport: http(),
   });
 
@@ -196,19 +224,20 @@ async function mintOnDestinationChain(
     },
   ];
 
-  const minterContract = getContract({
-    address: chainConfig.minterContractAddress as `0x${string}`,
-    abi: gatewayMinterAbi,
-    client,
-  });
-
-  // Mint each attestation
+  // Mint each attestation using the relayer account
   const txHashes: string[] = [];
   for (const { attestation, signature } of attestations) {
-    const txHash = await minterContract.write.gatewayMint([
-      attestation as `0x${string}`,
-      signature as `0x${string}`,
-    ]);
+    const txHash = await client.writeContract({
+      address: chainConfig.minterContractAddress as `0x${string}`,
+      abi: gatewayMinterAbi,
+      functionName: 'gatewayMint',
+      chain: chainConfig.viemChain,
+      account: relayerAccount,
+      args: [
+        attestation as `0x${string}`,
+        signature as `0x${string}`,
+      ],
+    });
     txHashes.push(txHash);
   }
 
