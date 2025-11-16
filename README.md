@@ -82,7 +82,7 @@ cd frontend && npm install
 
 Create `.env` at the repo root (not committed):
 
-```
+
 # Facilitator / Circle
 ```
 CIRCLE_API_KEY=YOUR_API_KEY
