@@ -1,9 +1,12 @@
 import '../config/loadEnv';
 import express, { Request, Response } from "express";
-import { createPublicClient, createWalletClient, http, publicActions, type Address, type Hex } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-// import { arbitrumSepolia } from "viem/chains";
-import { arcTestnet } from "../chains/arc"; 
+import {
+  createPublicClient,
+  http,
+  type Address,
+} from "viem";
+import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
+import { supportedChains, type ChainConfig, type CircleBlockchain } from "../chains";
 import { verifyTransferAuthorization } from "./eip3009";
 import type {
   EIP3009Authorization,
@@ -40,46 +43,76 @@ interface Invoice {
   };
 }
 
-const USDC_NAME = process.env.X402_TOKEN_NAME || "USDC";
-const USDC_VERSION = process.env.X402_TOKEN_VERSION || "2";
-const rpcUrl = process.env.ARC_TESTNET_RPC_URL;
-let signerKey = process.env.QUOTE_SERVICE_PRIVATE_KEY || "";
-const usdcAddress = process.env.X402_TOKEN_ADDRESS as Address | undefined;
+
 const facilitatorPort = process.env.FACILITATOR_PORT || 3002;
+const CIRCLE_API_KEY = process.env.CIRCLE_API_KEY;
+const CIRCLE_ENTITY_SECRET = process.env.CIRCLE_ENTITY_SECRET;
+const CIRCLE_WALLET_SET_ID = process.env.CIRCLE_WALLET_SET_ID;
+const CIRCLE_DCW_API_URL = process.env.CIRCLE_DCW_API_URL || "https://api.circle.com";
+const configuredDefaultNetwork = process.env.DEFAULT_NETWORK as SupportedNetwork | undefined;
 
-
-if (!signerKey) {
-  console.error("Missing QUOTE_SERVICE_PRIVATE_KEY environment variable");
+if (!CIRCLE_API_KEY) {
+  console.error("Missing CIRCLE_API_KEY environment variable");
   process.exit(1);
 }
 
-if (!signerKey.startsWith("0x")) {
-  signerKey = `0x${signerKey}`;
-}
-
-if (signerKey.length !== 66 || !/^0x[0-9a-fA-F]{64}$/.test(signerKey)) {
-  console.error("Invalid QUOTE_SERVICE_PRIVATE_KEY format");
+if (!CIRCLE_ENTITY_SECRET) {
+  console.error("Missing CIRCLE_ENTITY_SECRET environment variable");
   process.exit(1);
 }
 
-if (!usdcAddress) {
-  console.error("Missing X402_TOKEN_ADDRESS environment variable");
+if (!CIRCLE_WALLET_SET_ID) {
+  console.error("Missing CIRCLE_WALLET_SET_ID environment variable");
   process.exit(1);
 }
-const activeUsdcAddress = usdcAddress as Address;
 
-const account = privateKeyToAccount(signerKey as `0x${string}`);
-const walletClient = createWalletClient({
-  account,
-  chain: arcTestnet,
-  transport: http(rpcUrl),
-}).extend(publicActions);
+const circleApiKey = CIRCLE_API_KEY as string;
+const circleEntitySecret = CIRCLE_ENTITY_SECRET as string;
+const circleWalletSetId = CIRCLE_WALLET_SET_ID as string;
 
-const publicClient = createPublicClient({
-  chain: arcTestnet,
-  transport: http(rpcUrl),
+type FacilitatorPublicClient = ReturnType<typeof createPublicClient>;
+
+interface CircleWalletInfo {
+  id: string;
+  address: Address;
+  blockchain: CircleBlockchain;
+  walletSetId: string;
+}
+
+type CircleTransactionState =
+  | "CANCELLED"
+  | "CLEARED"
+  | "COMPLETE"
+  | "CONFIRMED"
+  | "DENIED"
+  | "FAILED"
+  | "INITIATED"
+  | "QUEUED"
+  | "SENT"
+  | "STUCK";
+
+interface CircleTransactionData {
+  id: string;
+  state: CircleTransactionState;
+  transactionHash?: string;
+}
+
+const circleClient = initiateDeveloperControlledWalletsClient({
+  apiKey: circleApiKey,
+  entitySecret: circleEntitySecret,
+  baseUrl: CIRCLE_DCW_API_URL,
 });
+const circleWalletCache: Partial<Record<SupportedNetwork, CircleWalletInfo>> = {};
 
+interface NetworkContext {
+  chain: ChainConfig;
+  circleWallet: CircleWalletInfo;
+  publicClient: FacilitatorPublicClient;
+}
+
+const networkContexts: Partial<Record<SupportedNetwork, NetworkContext>> = {};
+let availableNetworks: SupportedNetwork[] = [];
+let defaultNetwork: SupportedNetwork;
 const authorizationStateAbi = [{
   name: "authorizationState",
   type: "function",
@@ -91,23 +124,92 @@ const authorizationStateAbi = [{
   outputs: [{ name: "", type: "bool" }],
 }] as const;
 
-const transferWithAuthorizationAbi = [{
-  name: "transferWithAuthorization",
-  type: "function",
-  stateMutability: "nonpayable",
-  inputs: [
-    { name: "from", type: "address" },
-    { name: "to", type: "address" },
-    { name: "value", type: "uint256" },
-    { name: "validAfter", type: "uint256" },
-    { name: "validBefore", type: "uint256" },
-    { name: "nonce", type: "bytes32" },
-    { name: "v", type: "uint8" },
-    { name: "r", type: "bytes32" },
-    { name: "s", type: "bytes32" },
-  ],
-  outputs: [],
-}] as const;
+const TRANSFER_WITH_AUTHORIZATION_SIGNATURE =
+  "transferWithAuthorization(address,address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)";
+
+async function ensureCircleWallet(network: SupportedNetwork, chainConfig: ChainConfig): Promise<CircleWalletInfo> {
+  if (circleWalletCache[network]) {
+    return circleWalletCache[network] as CircleWalletInfo;
+  }
+
+  const listResponse = await circleClient.listWallets({
+    blockchain: chainConfig.circleBlockchain,
+    walletSetId: circleWalletSetId,
+  });
+  const existingWallets = listResponse.data?.wallets ?? [];
+
+  let wallet = existingWallets.find((w) => w.state === "LIVE");
+
+  if (!wallet) {
+    const createResponse = await circleClient.createWallets({
+      walletSetId: circleWalletSetId,
+      blockchains: [chainConfig.circleBlockchain],
+      count: 1,
+      metadata: [{ name: `${network}-facilitator` }],
+    });
+    const createdWallets = createResponse.data?.wallets ?? [];
+
+    wallet = createdWallets.find((w) => w.state === "LIVE") ?? createdWallets[0];
+  }
+
+  if (!wallet || !wallet.address) {
+    throw new Error(`Circle did not return a wallet for ${network}`);
+  }
+
+  const normalized: CircleWalletInfo = {
+    id: wallet.id as string,
+    address: wallet.address as Address,
+    blockchain: wallet.blockchain as CircleBlockchain,
+    walletSetId: wallet.walletSetId as string,
+  };
+
+  circleWalletCache[network] = normalized;
+  return normalized;
+}
+
+async function initializeNetworkContexts(): Promise<void> {
+  const entries = Object.entries(supportedChains) as [SupportedNetwork, ChainConfig][];
+  for (const [network, chainConfig] of entries) {
+    const rpcUrl = chainConfig.rpcUrl || chainConfig.viemChain.rpcUrls.default?.http?.[0];
+
+    if (!rpcUrl) {
+      console.warn(`[facilitator] Skipping network ${network} - missing RPC URL`);
+      continue;
+    }
+
+    if (!chainConfig.usdcAddress) {
+      console.warn(`[facilitator] Skipping network ${network} - missing USDC address`);
+      continue;
+    }
+
+    try {
+      const circleWallet = await ensureCircleWallet(network, chainConfig);
+      const transport = http(rpcUrl);
+      const publicClient = createPublicClient({
+        chain: chainConfig.viemChain,
+        transport,
+      });
+      networkContexts[network] = {
+        chain: chainConfig,
+        circleWallet,
+        publicClient,
+      };
+    } catch (error) {
+      console.error(`[facilitator] Failed to initialize network ${network}:`, error);
+    }
+  }
+
+  availableNetworks = Object.keys(networkContexts) as SupportedNetwork[];
+
+  if (!availableNetworks.length) {
+    throw new Error("No networks configured for facilitator");
+  }
+
+  defaultNetwork =
+    (configuredDefaultNetwork && availableNetworks.includes(configuredDefaultNetwork)
+      ? configuredDefaultNetwork
+      : availableNetworks[0]) as SupportedNetwork;
+}
 
 const app = express();
 app.use(express.json());
@@ -134,32 +236,42 @@ function buildInvoice(requirements: PaymentRequirements, reason: string): Invoic
   };
 }
 
-function ensureRequirements(req: PaymentRequirements): string | null {
-  console.log('[facilitator] verify request', {
-    expectedToken: activeUsdcAddress,
+function ensureRequirements(req: PaymentRequirements, context: NetworkContext): string | null {
+  console.log("[facilitator] verify request", {
+    expectedToken: context.chain.usdcAddress,
     providedToken: req.token,
-    expectedRecipient: account.address,
+    expectedRecipient: context.circleWallet.address,
     providedRecipient: req.recipient,
     network: req.network,
     amount: req.amount,
   });
+
   if (req.scheme !== "exact") {
     return "Unsupported payment scheme";
   }
-  if (req.network !== "arc-testnet") {
+
+  if (!networkContexts[req.network]) {
     return "Unsupported network";
   }
-  if (req.token.toLowerCase() !== activeUsdcAddress.toLowerCase()) {
+
+  if (req.token.toLowerCase() !== context.chain.usdcAddress.toLowerCase()) {
     return "Unsupported token";
   }
-  if (req.recipient.toLowerCase() !== account.address.toLowerCase()) {
-    return "Recipient does not match facilitator payout address";
+
+  if (req.recipient.toLowerCase() !== context.circleWallet.address.toLowerCase()) {
+    return "Recipient does not match Circle wallet address";
   }
+
   if (BigInt(req.amount) <= 0) {
     return "Amount must be positive";
   }
+
   return null;
 }
+
+
+
+
 
 function toAuthorization(payload: EIP3009PaymentPayload): EIP3009Authorization {
   return {
@@ -180,19 +292,21 @@ function toSignature(payload: EIP3009PaymentPayload): EIP3009Signature {
   };
 }
 
+
+
+
+
+// Verifies if the authorization is valid and not already used
 async function verifyAuthorization(
   paymentPayload: EIP3009PaymentPayload,
-  requirements: PaymentRequirements
+  requirements: PaymentRequirements,
+  context: NetworkContext
 ): Promise<{ authorization: EIP3009Authorization; signature: EIP3009Signature }> {
   const auth = toAuthorization(paymentPayload);
   const sig = toSignature(paymentPayload);
 
-  if (paymentPayload.scheme !== "exact" || paymentPayload.network !== "arc-testnet") {
+  if (paymentPayload.scheme !== "exact" || paymentPayload.network !== requirements.network) {
     throw new Error("Payment payload network mismatch");
-  }
-
-  if (paymentPayload.payload.to.toLowerCase() !== account.address.toLowerCase()) {
-    throw new Error("Payment payload recipient mismatch");
   }
 
   if (paymentPayload.payload.value !== requirements.amount) {
@@ -207,16 +321,16 @@ async function verifyAuthorization(
     auth,
     sig,
     requirements.token,
-    USDC_NAME,
-    USDC_VERSION,
-    arcTestnet.id
+    context.chain.usdcName,
+    context.chain.usdcVersion,
+    context.chain.viemChain.id
   );
 
   if (!recovered || recovered.toLowerCase() !== auth.from.toLowerCase()) {
     throw new Error("Invalid EIP-3009 signature");
   }
 
-  const alreadyUsed = await publicClient.readContract({
+  const alreadyUsed = await context.publicClient.readContract({
     address: requirements.token,
     abi: authorizationStateAbi,
     functionName: "authorizationState",
@@ -238,27 +352,57 @@ async function verifyAuthorization(
   return { authorization: auth, signature: sig };
 }
 
+
+
+
 app.get("/supported", (_req: Request, res: Response) => {
   res.json({
-    kinds: [{
+    kinds: availableNetworks.map((network) => ({
       x402Version: 1,
-      scheme: "exact",
-      network: "arc-testnet",
-    }],
+      scheme: "exact" as SupportedScheme,
+      network,
+    })),
   });
+});
+
+app.get("/networks", (_req: Request, res: Response) => {
+  const networks = availableNetworks
+    .map((network) => {
+      const context = networkContexts[network];
+      if (!context) {
+        return null;
+      }
+      return {
+        network,
+        token: context.chain.usdcAddress,
+        recipient: context.circleWallet.address,
+        usdcName: context.chain.usdcName,
+        usdcVersion: context.chain.usdcVersion,
+        chainId: context.chain.viemChain.id,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  res.json({ networks });
 });
 
 app.post("/verify", async (req: Request, res: Response) => {
   try {
     const body = req.body as VerifyRequestBody;
     const requirements = body.paymentRequirements;
+    const context = requirements ? networkContexts[requirements.network] : undefined;
 
     if (!requirements) {
       res.status(400).json({ error: "Missing payment requirements" });
       return;
     }
 
-    const reqError = ensureRequirements(requirements);
+    if (!context) {
+      res.status(400).json({ error: "Unsupported network" });
+      return;
+    }
+
+    const reqError = ensureRequirements(requirements, context);
     if (reqError) {
       res.status(400).json({ error: reqError, invoice: buildInvoice(requirements, reqError) });
       return;
@@ -273,7 +417,7 @@ app.post("/verify", async (req: Request, res: Response) => {
       return;
     }
 
-    const { authorization } = await verifyAuthorization(body.paymentPayload, requirements);
+    const { authorization } = await verifyAuthorization(body.paymentPayload, requirements, context);
 
     res.json({
       valid: true,
@@ -301,13 +445,19 @@ app.post("/settle", async (req: Request, res: Response) => {
   try {
     const body = req.body as SettleRequestBody;
     const requirements = body.paymentRequirements;
+    const context = requirements ? networkContexts[requirements.network] : undefined;
 
     if (!requirements) {
       res.status(400).json({ error: "Missing payment requirements" });
       return;
     }
 
-    const reqError = ensureRequirements(requirements);
+    if (!context) {
+      res.status(400).json({ error: "Unsupported network" });
+      return;
+    }
+
+    const reqError = ensureRequirements(requirements, context);
     if (reqError) {
       res.status(400).json({ error: reqError });
       return;
@@ -318,33 +468,43 @@ app.post("/settle", async (req: Request, res: Response) => {
       return;
     }
 
-    const { authorization, signature } = await verifyAuthorization(body.paymentPayload, requirements);
+    const { authorization, signature } = await verifyAuthorization(body.paymentPayload, requirements, context);
 
-    const hash: Hex = await walletClient.writeContract({
-      address: requirements.token,
-      abi: transferWithAuthorizationAbi,
-      functionName: "transferWithAuthorization",
-      args: [
+    const transactionResponse = await circleClient.createContractExecutionTransaction({
+      walletId: context.circleWallet.id,
+      contractAddress: requirements.token,
+      abiFunctionSignature: TRANSFER_WITH_AUTHORIZATION_SIGNATURE,
+      abiParameters: [
         authorization.from,
         authorization.to,
-        BigInt(authorization.value),
-        BigInt(authorization.validAfter),
-        BigInt(authorization.validBefore),
+        authorization.value,
+        authorization.validAfter,
+        authorization.validBefore,
         authorization.nonce,
         signature.v,
         signature.r,
         signature.s,
       ],
+      refId: requirements.description,
+      fee: {
+        type: "level",
+        config: { feeLevel: "MEDIUM" },
+      },
     });
+    const circleTransaction = transactionResponse.data;
+    if (!circleTransaction) {
+      throw new Error("Circle did not return transaction data");
+    }
+    const successStates: CircleTransactionState[] = ["CLEARED", "COMPLETE", "CONFIRMED", "SENT"];
 
-    const receipt = await walletClient.waitForTransactionReceipt({ hash });
+    const transactionHash =
+      (circleTransaction as { transactionHash?: string | null }).transactionHash ?? null;
 
     res.json({
-      success: receipt.status === "success",
-      transactionHash: receipt.transactionHash,
-      blockNumber: Number(receipt.blockNumber),
-      gasUsed: receipt.gasUsed?.toString() || null,
-      status: receipt.status === "success" ? "confirmed" : "failed",
+      success: successStates.includes(circleTransaction.state),
+      circleTransactionId: circleTransaction.id,
+      state: circleTransaction.state,
+      transactionHash,
     });
   } catch (error) {
     const err = error instanceof Error ? error.message : "Settlement failed";
@@ -355,12 +515,21 @@ app.post("/settle", async (req: Request, res: Response) => {
 app.get("/invoice", (req: Request, res: Response) => {
   const amount = req.query.amount as string | undefined;
   const description = req.query.description as string | undefined;
+  const networkParam = req.query.network as SupportedNetwork | undefined;
+  const network = (networkParam && networkContexts[networkParam]) ? networkParam : defaultNetwork;
+  const context = networkContexts[network];
+
+  if (!context) {
+    res.status(400).json({ error: "Unsupported network" });
+    return;
+  }
+
   const requirements: PaymentRequirements = {
     scheme: "exact",
-    network: "arc-testnet",
-    token: activeUsdcAddress,
+    network,
+    token: context.chain.usdcAddress,
     amount: amount || "1000",
-    recipient: account.address as Address,
+    recipient: context.circleWallet.address,
     description: description || "X402 payment",
     maxTimeoutSeconds: 300,
   };
@@ -369,7 +538,24 @@ app.get("/invoice", (req: Request, res: Response) => {
   res.json(invoice);
 });
 
-app.listen(facilitatorPort, () => {
-  console.log(`X402 facilitator listening at http://localhost:${facilitatorPort}`);
-  console.log(`Accepting payments on ${arcTestnet.name}`);
+async function bootstrap(): Promise<void> {
+  await initializeNetworkContexts();
+
+  app.listen(facilitatorPort, () => {
+    console.log(`X402 facilitator listening at http://localhost:${facilitatorPort}`);
+    console.log("Active facilitator networks:");
+    availableNetworks.forEach((network) => {
+      const context = networkContexts[network];
+      if (context) {
+        console.log(
+          ` - ${network}: Circle wallet ${context.circleWallet.address} (${context.circleWallet.id})`
+        );
+      }
+    });
+  });
+}
+
+bootstrap().catch((error) => {
+  console.error("Failed to start facilitator:", error);
+  process.exit(1);
 });

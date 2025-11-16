@@ -1,7 +1,8 @@
 import type { Address } from 'viem';
+import { supportedChains } from '../chains/index'; 
 
 export type SupportedScheme = 'exact';
-export type SupportedNetwork = 'arbitrum-sepolia' | 'arc-testnet';
+export type SupportedNetwork = keyof typeof supportedChains;
 
 // EIP-3009 Transfer with Authorization primitives
 export interface EIP3009Authorization {
