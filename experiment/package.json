@@ -1,0 +1,24 @@
+{
+  "name": "arc-relay-deposit",
+  "version": "1.0.0",
+  "description": "Deposit script for ARC-TESTNET Gateway Wallet",
+  "type": "module",
+  "main": "deposit.js",
+  "scripts": {
+    "deposit": "node deposit.js"
+  },
+  "keywords": [
+    "arc",
+    "testnet",
+    "deposit",
+    "gateway",
+    "usdc"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "viem": "^2.21.0"
+  }
+}
+

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 .env
 .env.local
 .env.development.local
@@ -86,3 +87,17 @@ env/
 frontend/.next/
 frontend/.turbo/
 frontend/.vercel/
+=======
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Recovery files (contain sensitive entity secret data)
+register-once/recovery/
+
+>>>>>>> ecdc3e3 (feat: add circle gateway experimental code for multi chain transactions)
