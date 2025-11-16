@@ -1,6 +1,7 @@
 import { Router, Response, Request } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { circleClient } from '../services/circleClient';
+import { getWalletTokenBalancesById } from '../services/gatewayService';
 import { getUserByUuid } from '../db/connection';
 
 // Type guard to ensure userUuid exists
@@ -41,17 +42,14 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     const balances = await Promise.all(
       walletsResponse.data.wallets.map(async (wallet) => {
         try {
-          const balanceResponse = await circleClient.getWalletTokenBalance({
-            id: wallet.id,
-            includeAll: true,
-          });
+          const tokenBalances = await getWalletTokenBalancesById(wallet.id);
 
           return {
             circleWalletId: wallet.id,
             blockchain: wallet.blockchain,
             address: wallet.address,
             state: wallet.state,
-            balances: balanceResponse.data?.tokenBalances || [],
+            balances: tokenBalances,
           };
         } catch (error: any) {
           console.error(`Error fetching balance for wallet ${wallet.id}:`, error);
@@ -106,17 +104,14 @@ router.get('/:walletId', async (req: AuthRequest, res: Response) => {
       return;
     }
 
-    const balanceResponse = await circleClient.getWalletTokenBalance({
-      id: circleWalletId,
-      includeAll: true,
-    });
+    const tokenBalances = await getWalletTokenBalancesById(circleWalletId);
 
     res.json({
       circleWalletId: wallet.id,
       blockchain: wallet.blockchain,
       address: wallet.address,
       state: wallet.state,
-      balances: balanceResponse.data?.tokenBalances || [],
+      balances: tokenBalances,
     });
   } catch (error: any) {
     console.error('Get wallet balance error:', error);
