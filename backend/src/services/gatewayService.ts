@@ -10,7 +10,7 @@ import {
   http,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { baseSepolia, sepolia } from 'viem/chains';
+import { avalancheFuji } from 'viem/chains';
 
 // ---------------------------------------------------------------------------
 // Gateway domain / chain configuration (limited to 3 chains)
@@ -21,13 +21,13 @@ const GATEWAY_WALLET_ADDRESS = '0x0077777d7EBA4688BDeF3E311b846F25870A19B9';
 const GATEWAY_MINTER_ADDRESS = '0x0022222ABE238Cc2C7Bb1f21003F0a260052475B';
 
 // USDC addresses (env override with hardcoded defaults)
-const ETH_SEPOLIA_USDC_ADDRESS =
-  process.env.ETH_SEPOLIA_USDC_ADDRESS ??
-  '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
+const AVAX_FUJI_USDC_ADDRESS =
+  process.env.AVAX_FUJI_USDC_ADDRESS ??
+  '0x5425890298aed601595a70AB815c96711a31Bc65';
 
-const BASE_SEPOLIA_USDC_ADDRESS =
-  process.env.BASE_SEPOLIA_USDC_ADDRESS ??
-  '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
+const HYPEREVM_TESTNET_USDC_ADDRESS =
+  process.env.HYPEREVM_TESTNET_USDC_ADDRESS ??
+  '0x2B3370eE501B4a559b57D449569354196457D8Ab';
 
 const ARC_TESTNET_USDC_ADDRESS =
   process.env.ARC_TESTNET_USDC_ADDRESS ??
@@ -56,11 +56,34 @@ const arcTestnetChain = defineChain({
   testnet: true,
 });
 
+// HyperEVM Testnet chain definition (not in viem default chains)
+const hyperEvmTestnetChain = defineChain({
+  id: 19,
+  name: 'HyperEVM Testnet',
+  nativeCurrency: {
+    decimals: 18,
+    name: 'HYPR',
+    symbol: 'HYPR',
+  },
+  rpcUrls: {
+    default: {
+      http: [process.env.HYPEREVM_TESTNET_RPC_URL || 'https://testnet.hyperliquid.xyz'],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: 'HyperEVM Testnet Explorer',
+      url: 'https://explorer.hyperliquid.xyz/',
+    },
+  },
+  testnet: true,
+});
+
 export interface GatewayDomainConfig {
-  chain: 'Ethereum' | 'Base' | 'ARC';
-  network: 'Sepolia' | 'Testnet';
-  /** Circle blockchain identifier, e.g. ETH-SEPOLIA */
-  blockchain: 'ETH-SEPOLIA' | 'BASE-SEPOLIA' | 'ARC-TESTNET';
+  chain: 'Avalanche' | 'HyperEVM' | 'ARC';
+  network: 'Fuji' | 'Testnet';
+  /** Circle blockchain identifier, e.g. AVAX-FUJI */
+  blockchain: 'AVAX-FUJI' | 'HYPEREVM-TESTNET' | 'ARC-TESTNET';
   /** Gateway domain id from Circle spec */
   domain: number;
   walletContractAddress: string;
@@ -72,25 +95,26 @@ export interface GatewayDomainConfig {
 
 // Keyed by `${chain}:${network}` from user input
 export const GATEWAY_DOMAIN_CONFIGS: Record<string, GatewayDomainConfig> = {
-  'Ethereum:Sepolia': {
-    chain: 'Ethereum',
-    network: 'Sepolia',
-    blockchain: 'ETH-SEPOLIA',
-    domain: 0,
+  'Avalanche:Fuji': {
+    chain: 'Avalanche',
+    network: 'Fuji',
+    blockchain: 'AVAX-FUJI',
+    domain: 1,
     walletContractAddress: GATEWAY_WALLET_ADDRESS,
     minterContractAddress: GATEWAY_MINTER_ADDRESS,
-    usdcAddress: ETH_SEPOLIA_USDC_ADDRESS,
-    viemChain: sepolia,
+    usdcAddress: AVAX_FUJI_USDC_ADDRESS,
+    viemChain: avalancheFuji,
   },
-  'Base:Sepolia': {
-    chain: 'Base',
-    network: 'Sepolia',
-    blockchain: 'BASE-SEPOLIA',
-    domain: 6,
+  'HyperEVM:Testnet': {
+    chain: 'HyperEVM',
+    network: 'Testnet',
+    blockchain: 'HYPEREVM-TESTNET',
+    // HyperEVM Testnet domain from Circle Gateway domains spec
+    domain: 19,
     walletContractAddress: GATEWAY_WALLET_ADDRESS,
     minterContractAddress: GATEWAY_MINTER_ADDRESS,
-    usdcAddress: BASE_SEPOLIA_USDC_ADDRESS,
-    viemChain: baseSepolia,
+    usdcAddress: HYPEREVM_TESTNET_USDC_ADDRESS,
+    viemChain: hyperEvmTestnetChain,
   },
   'ARC:Testnet': {
     chain: 'ARC',
@@ -172,6 +196,47 @@ function parseUsdcAmountToBaseUnits(amount: string): bigint {
 
   const full = `${intPart}${fracPartPadded}`;
   return BigInt(full);
+}
+
+/**
+ * Call Circle Gateway balances API for a single (domain, depositor) pair
+ * and return the USDC balance in base units (6 decimals).
+ */
+async function getGatewayUsdcBalanceForDepositor(
+  domain: number,
+  depositor: string
+): Promise<bigint> {
+  const resp = await fetch('https://gateway-api-testnet.circle.com/v1/balances', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      token: 'USDC',
+      sources: [
+        {
+          domain,
+          depositor,
+        },
+      ],
+    }),
+  });
+
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    console.warn(
+      `[Gateway][balances] Failed to fetch balances for domain=${domain} depositor=${depositor}: ${resp.status} ${resp.statusText}`,
+      body
+    );
+    return 0n;
+  }
+
+  const json: any = await resp.json().catch(() => ({}));
+  const entry = Array.isArray(json?.balances) ? json.balances[0] : undefined;
+  const balanceStr = entry?.balance as string | undefined;
+  if (!balanceStr) {
+    return 0n;
+  }
+
+  return parseUsdcAmountToBaseUnits(balanceStr);
 }
 
 /**
@@ -259,8 +324,8 @@ async function prefundForContractExecution(
     abiParameters: (string | number | boolean)[];
   }
 ): Promise<void> {
-  // Only ETH-based testnets need native token for gas
-  if (blockchain !== 'ETH-SEPOLIA' && blockchain !== 'BASE-SEPOLIA') {
+  // Only EVM testnets that require native gas (Avalanche Fuji, HyperEVM Testnet)
+  if (blockchain !== 'AVAX-FUJI' && blockchain !== 'HYPEREVM-TESTNET') {
     return;
   }
 
@@ -491,6 +556,43 @@ async function waitForTransactionConfirmed(
 }
 
 /**
+ * After a deposit transaction is CONFIRMED on-chain, Gateway may still take
+ * a short while to index the new balance. This helper polls the Gateway
+ * balances API until the USDC balance for the (domain, depositor) pair
+ * increases by at least `expectedDelta`, starting from a known pre-deposit
+ * balance (`startingBalance`).
+ */
+async function waitForGatewayBalanceIncrease(
+  domain: number,
+  depositor: string,
+  expectedDelta: bigint,
+  startingBalance: bigint,
+  options?: { maxAttempts?: number; pollIntervalMs?: number }
+): Promise<void> {
+  const maxAttempts = options?.maxAttempts ?? 60;
+  const pollIntervalMs = options?.pollIntervalMs ?? 1000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await sleep(pollIntervalMs);
+    const currentBalance = await getGatewayUsdcBalanceForDepositor(domain, depositor);
+
+    console.log(
+      `[Gateway][balances] attempt=${attempt} domain=${domain} depositor=${depositor} ` +
+        `start=${startingBalance.toString()} current=${currentBalance.toString()}`
+    );
+
+    if (currentBalance >= startingBalance + expectedDelta) {
+      return;
+    }
+  }
+
+  throw new Error(
+    `[Gateway][balances] USDC balance did not increase by expected delta ` +
+      `within timeout (domain=${domain} depositor=${depositor})`
+  );
+}
+
+/**
  * Deposit tokens to Gateway contract using Circle API
  * This requires two steps:
  * 1. Approve USDC spending to Gateway contract
@@ -506,6 +608,19 @@ export async function depositToGateway(
   if (!domainConfig) {
     throw new Error(`Unsupported blockchain for deposit: ${blockchain}`);
   }
+
+  // Resolve the depositor address for later Gateway balance polling
+  const walletResp = await circleClient.getWallet({ id: walletId });
+  const depositorAddress = walletResp.data?.wallet?.address as `0x${string}` | undefined;
+  if (!depositorAddress) {
+    throw new Error(`Unable to resolve wallet address for walletId=${walletId}`);
+  }
+
+  // Capture the pre-deposit Gateway USDC balance for this (domain, depositor)
+  const gatewayBalanceBefore = await getGatewayUsdcBalanceForDepositor(
+    domainConfig.domain,
+    depositorAddress
+  );
 
   // Log concise info about the deposit operation (for debugging INSUFFICIENT_TOKEN)
   const humanAmount = (() => {
@@ -603,6 +718,15 @@ export async function depositToGateway(
       }
     }
   }
+
+  // After the deposit transaction is confirmed on-chain, wait for Gateway
+  // to index the new balance before proceeding to burn / attestation steps.
+  await waitForGatewayBalanceIncrease(
+    domainConfig.domain,
+    depositorAddress,
+    amount,
+    gatewayBalanceBefore
+  );
 
   return lastDepositTxId as string;
 }

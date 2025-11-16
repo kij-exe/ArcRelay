@@ -84,7 +84,7 @@ Authenticates a user and returns a JWT token.
 #### Create Wallets
 **POST** `/wallets/create`
 
-Creates developer-controlled wallets for the authenticated user across the supported blockchains. Wallets are automatically created for: ETH-SEPOLIA, BASE-SEPOLIA, and ARC-TESTNET.
+Creates developer-controlled wallets for the authenticated user across the supported blockchains. Wallets are automatically created for: AVAX-FUJI, HYPEREVM-TESTNET, and ARC-TESTNET.
 
 **Headers:**
 ```
@@ -96,8 +96,8 @@ None (no request body required)
 
 **Supported Blockchains:**
 Wallets are automatically created for:
-- `ETH-SEPOLIA`
-- `BASE-SEPOLIA`
+- `AVAX-FUJI`
+- `HYPEREVM-TESTNET`
 - `ARC-TESTNET`
 
 **Response (201):**
@@ -145,7 +145,7 @@ Wallets are automatically created for:
 
 Retrieves wallet information and aggregated USDC balances for the authenticated user.
 
-Each user has one Circle wallet per supported blockchain: `ETH-SEPOLIA`, `BASE-SEPOLIA`, and `ARC-TESTNET`.
+Each user has one Circle wallet per supported blockchain: `AVAX-FUJI`, `HYPEREVM-TESTNET`, and `ARC-TESTNET`.
 
 **Headers:**
 ```
@@ -198,7 +198,7 @@ Authorization: Bearer <token>
 - `walletSetId`: convenience copy of the wallet set ID.
 - `wallets[]`:
   - `circleWalletId`: Circle wallet ID.
-  - `blockchain`: `ETH-SEPOLIA`, `BASE-SEPOLIA`, or `ARC-TESTNET`.
+  - `blockchain`: `AVAX-FUJI`, `HYPEREVM-TESTNET`, or `ARC-TESTNET`.
   - `address`: EVM address of the wallet.
   - `state`: `"LIVE"` or `"FROZEN"`.
   - `createDate`, `updateDate`: wallet timestamps (ISO 8601, UTC).
@@ -271,9 +271,9 @@ Content-Type: application/json
 {
   "amount": "10.5",
   "destinationAddress": "0x1234567890abcdef1234567890abcdef12345678",
-  "chain": "Base",
-  "network": "Sepolia",
-  "sourceWallets": ["Base:Sepolia", "ARC:Testnet"]
+  "chain": "Avalanche",
+  "network": "Fuji",
+  "sourceWallets": ["Avalanche:Fuji", "ARC:Testnet"]
 }
 ```
 
@@ -281,19 +281,19 @@ Content-Type: application/json
 - `amount` (string, required): Amount of USDC to transfer (human-readable, 6 decimals, e.g. `"10.5"`)
 - `destinationAddress` (string, required): EVM address that will receive USDC on the destination chain
 - `chain` (string, required): Destination chain. Supported values:
-  - `"Ethereum"`
-  - `"Base"`
+  - `"Avalanche"`
+  - `"HyperEVM"`
   - `"ARC"`
 - `network` (string, required): Destination network. Supported values:
-  - `"Sepolia"` for Ethereum / Base
-  - `"Testnet"` for ARC
+  - `"Fuji"` for Avalanche
+  - `"Testnet"` for HyperEVM / ARC
 - `sourceWallets` (string[], optional): List of source wallets to use for funding the transfer.
-  - Format: `"Chain:Network"`, e.g. `"Base:Sepolia"`, `"ARC:Testnet"`.
+  - Format: `"Chain:Network"`, e.g. `"Avalanche:Fuji"`, `"ARC:Testnet"`.
   - If omitted, **all** of the user's wallets are considered when selecting balances.
 
 **Destination chain mapping:**
-- `{ "chain": "Ethereum", "network": "Sepolia" }` → `ETH-SEPOLIA`
-- `{ "chain": "Base", "network": "Sepolia" }` → `BASE-SEPOLIA`
+- `{ "chain": "Avalanche", "network": "Fuji" }` → `AVAX-FUJI`
+- `{ "chain": "HyperEVM", "network": "Testnet" }` → `HYPEREVM-TESTNET`
 - `{ "chain": "ARC", "network": "Testnet" }` → `ARC-TESTNET`
 
 **Response (200):**
@@ -306,7 +306,7 @@ Content-Type: application/json
   "mintTransactions": [
     "0xabc123...def456"
   ],
-  "destinationBlockchain": "BASE-SEPOLIA",
+  "destinationBlockchain": "AVAX-FUJI",
   "destinationAddress": "0x1234567890abcdef1234567890abcdef12345678",
   "amount": "10.5"
 }
@@ -371,7 +371,7 @@ For validation errors:
 1. All timestamps are in ISO 8601 format (UTC)
 2. Amounts are represented as strings to avoid precision issues
 3. The JWT token expires after 7 days (configurable via `JWT_EXPIRES_IN`)
-4. Wallet creation automatically creates a wallet set for each user, then creates 3 wallets (one for each supported blockchain: ETH-SEPOLIA, BASE-SEPOLIA, ARC-TESTNET) linked to that wallet set
+4. Wallet creation automatically creates a wallet set for each user, then creates 3 wallets (one for each supported blockchain: AVAX-FUJI, HYPEREVM-TESTNET, ARC-TESTNET) linked to that wallet set
 5. Each user can only create wallets once (subsequent requests will return 409 error)
 6. All wallets for a user are managed through their wallet set
 7. Transaction history is managed by Circle's API (not stored in our database)

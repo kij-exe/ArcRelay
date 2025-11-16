@@ -105,15 +105,8 @@ src/
 
 ## Supported Blockchains
 
-- Ethereum (ETH, ETH-SEPOLIA)
-- Polygon (MATIC, MATIC-AMOY)
-- Base (BASE, BASE-SEPOLIA)
-- Arbitrum (ARB, ARB-SEPOLIA)
-- Optimism (OP, OP-SEPOLIA)
 - Avalanche (AVAX, AVAX-FUJI)
-- Solana (SOL, SOL-DEVNET)
-- Aptos (APTOS, APTOS-TESTNET)
-- Unichain (UNI, UNI-SEPOLIA)
+- HyperEVM (HYPR, HyperEVM Testnet)
 - Arc (ARC-TESTNET)
 
 ## License
