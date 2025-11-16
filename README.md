@@ -16,6 +16,24 @@ A full x402-style payment gateway and developer dashboard that lets API provider
 - Circle DCW: Custodial wallets per developer; the facilitator uses DCW to execute transfers and holds the developer’s receiving wallets.
 - Circle Gateway: Unified USDC balance across chains; Withdraw page initiates cross‑chain transfers using a backend `POST /gateway/transfer`.
 
+## Developer‑Controlled Wallets & Gateway on the backend
+
+ArcRelay’s backend uses **Circle Developer‑Controlled Wallets (DCW)** as the custody layer and **Circle Gateway** as the cross‑chain liquidity layer:
+
+- **DCW on the backend**
+  - The facilitator owns a Circle wallet set and per‑chain wallets (e.g. Ethereum Sepolia, Base Sepolia, Arc Testnet, Avalanche Fuji).
+  - When the proxy settles a paid request, the facilitator signs and submits DCW transactions (EIP‑3009 or standard ERC‑20) on behalf of the developer.
+  - All balances and wallet metadata are read directly from Circle’s DCW APIs; no on‑backend wallet key management is required.
+
+- **Gateway for withdrawals**
+  - The backend exposes `POST /gateway/transfer`, which moves USDC from DCW wallets into Gateway wallets and mints on a target chain using Circle Gateway.
+  - The frontend Withdraw page calls this endpoint to let developers cash out to any supported testnet without worrying about bridge UX or per‑chain “where are my funds?” issues.
+
+- **Why this matters for UX**
+  - Developers see a **single, aggregated USDC view** across all chains in the dashboard, even though payments can land on different networks.
+  - Withdrawals feel like moving money from a **single balance** to a destination chain, while the backend handles DCW transactions, Gateway deposits, burn intents, and mints.
+  - This separation (proxy ↔ facilitator ↔ DCW/Gateway) keeps keys and chain logic in the backend, so client code and dashboard remain simple and secure.
+
 ## Architecture
 
 ```
