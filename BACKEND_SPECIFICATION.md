@@ -84,7 +84,7 @@ Authenticates a user and returns a JWT token.
 #### Create Wallets
 **POST** `/wallets/create`
 
-Creates developer-controlled wallets for the authenticated user across all supported blockchains. Wallets are automatically created for: BASE-SEPOLIA, ARB-SEPOLIA, and ARC-TESTNET.
+Creates developer-controlled wallets for the authenticated user across all supported blockchains. Wallets are automatically created for: BASE-SEPOLIA, ETH-SEPOLIA, and ARC-TESTNET.
 
 **Headers:**
 ```
@@ -97,7 +97,7 @@ None (no request body required)
 **Supported Blockchains:**
 Wallets are automatically created for:
 - `BASE-SEPOLIA`
-- `ARB-SEPOLIA`
+- `ETH-SEPOLIA`
 - `ARC-TESTNET`
 
 **Response (201):**
@@ -118,7 +118,7 @@ Wallets are automatically created for:
     },
     {
       "circleWalletId": "b746e7f9-5318-5f48-c23f-877bgc0c4903",
-      "blockchain": "ARB-SEPOLIA",
+      "blockchain": "ETH-SEPOLIA",
       "address": "0x853e46DdCc6634C0532925a3b844Bc9e7595f0bEc",
       "state": "LIVE"
     },
@@ -300,7 +300,7 @@ For validation errors:
 1. All timestamps are in ISO 8601 format (UTC)
 2. Amounts are represented as strings to avoid precision issues
 3. The JWT token expires after 7 days (configurable via `JWT_EXPIRES_IN`)
-4. Wallet creation automatically creates a wallet set for each user, then creates 3 wallets (one for each supported blockchain: BASE-SEPOLIA, ARB-SEPOLIA, ARC-TESTNET) linked to that wallet set
+4. Wallet creation automatically creates a wallet set for each user, then creates 3 wallets (one for each supported blockchain: BASE-SEPOLIA, ETH-SEPOLIA, ARC-TESTNET) linked to that wallet set
 5. Each user can only create wallets once (subsequent requests will return 409 error)
 6. All wallets for a user are managed through their wallet set
 7. Transaction history is managed by Circle's API (not stored in our database)

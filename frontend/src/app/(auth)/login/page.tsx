@@ -172,7 +172,7 @@ export default function LoginPage() {
             No Circle wallets found
           </p>
           <p className="mt-1 text-sm text-text-secondary">
-            Create developer-controlled wallets on Base, Arbitrum, and Arc to
+            Create developer-controlled wallets on Base, Ethereum, and Arc to
             start collecting payments.
           </p>
           <button

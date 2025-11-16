@@ -133,7 +133,7 @@ export default function DashboardPage() {
   const formatNetwork = (network: string) => {
     const networkMap: Record<string, string> = {
       "BASE-SEPOLIA": "Base",
-      "ARB-SEPOLIA": "Arbitrum",
+      "ETH-SEPOLIA": "Ethereum",
       "ARC-TESTNET": "Arc",
     };
     return networkMap[network] || network;

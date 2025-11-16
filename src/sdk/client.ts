@@ -262,7 +262,7 @@ async function prepareEIP712Payload(params: PreparePayloadParams): Promise<Prepa
     params.domainOverride ??
     (offer.eip712Domain ?? (params.docsRepo ? await params.docsRepo.getDomain() : DEFAULT_DOMAIN));
 
-  const network = params.networkOverride ?? docsEntry?.network ?? offer.network ?? 'arbitrum-sepolia';
+  const network = params.networkOverride ?? docsEntry?.network ?? offer.network ?? 'ethereum-sepolia';
   const scheme = params.schemeOverride ?? docsEntry?.scheme ?? offer.scheme ?? 'exact';
   const payerAddress = params.payerAddress;
 

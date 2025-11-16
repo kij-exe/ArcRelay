@@ -50,14 +50,14 @@ interface TransactionsResponse {
 const SUPPORTED_CHAINS = [
   { value: "ARC-TESTNET", label: "ARC Testnet" },
   { value: "BASE-SEPOLIA", label: "Base Sepolia" },
-  { value: "ARB-SEPOLIA", label: "Arbitrum Sepolia" },
+  { value: "ETH-SEPOLIA", label: "Ethereum Sepolia" },
 ] as const;
 
 // Ethereum address validation regex (works for all EVM chains)
 const ETHEREUM_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 
 const withdrawalSchema = z.object({
-  destinationChain: z.enum(["ARC-TESTNET", "BASE-SEPOLIA", "ARB-SEPOLIA"]),
+  destinationChain: z.enum(["ARC-TESTNET", "BASE-SEPOLIA", "ETH-SEPOLIA"]),
   destinationAddress: z
     .string()
     .min(1, "Destination address is required")
@@ -180,7 +180,7 @@ export default function WithdrawPage() {
     if (!txHash) return null;
     const chainMap: Record<string, string> = {
       "BASE-SEPOLIA": `https://sepolia.basescan.org/tx/${txHash}`,
-      "ARB-SEPOLIA": `https://sepolia.arbiscan.io/tx/${txHash}`,
+      "ETH-SEPOLIA": `https://sepolia.etherscan.io/tx/${txHash}`,
       "ARC-TESTNET": `https://explorer-sepolia.archon.foundation/tx/${txHash}`,
     };
     return chainMap[chain] || null;

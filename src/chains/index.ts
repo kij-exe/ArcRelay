@@ -1,6 +1,6 @@
 // src/chains/index.ts
 import { defineChain } from 'viem';
-import { arbitrumSepolia, baseSepolia } from 'viem/chains';
+import { sepolia, baseSepolia } from 'viem/chains';
 import type { Address, Chain } from 'viem';
 
 // Define Arc Testnet
@@ -13,13 +13,13 @@ export const arcTestnet = defineChain({
 
 // Define a type for our chain configuration
 export type CircleBlockchain =
-  | 'ARB-SEPOLIA'
+  | 'ETH-SEPOLIA'
   | 'BASE-SEPOLIA'
   | 'ARC-TESTNET';
 
 export interface ChainConfig {
   viemChain: Chain;
-  networkName: string; // Your internal name (e.g., "arbitrum-sepolia")
+  networkName: string; // Your internal name (e.g., "ethereum-sepolia")
   usdcAddress: Address;
   usdcName: string;
   usdcVersion: string;
@@ -29,14 +29,14 @@ export interface ChainConfig {
 
 // Create a configuration map for all supported chains
 export const supportedChains: Record<string, ChainConfig> = {
-  'arbitrum-sepolia': {
-    viemChain: arbitrumSepolia,
-    networkName: 'arbitrum-sepolia',
-    usdcAddress: process.env.ARBITRUM_SEPOLIA_USDC_ADDRESS as Address,
-    usdcName: process.env.ARBITRUM_SEPOLIA_USDC_NAME || 'TestUSDC',
-    usdcVersion: process.env.ARBITRUM_SEPOLIA_USDC_VERSION || '1',
-    rpcUrl: process.env.ARBITRUM_SEPOLIA_RPC_URL || '',
-    circleBlockchain: 'ARB-SEPOLIA',
+  'ethereum-sepolia': {
+    viemChain: sepolia,
+    networkName: 'ethereum-sepolia',
+    usdcAddress: process.env.ETHEREUM_SEPOLIA_USDC_ADDRESS as Address,
+    usdcName: process.env.ETHEREUM_SEPOLIA_USDC_NAME || 'USDC',
+    usdcVersion: process.env.ETHEREUM_SEPOLIA_USDC_VERSION || '2',
+    rpcUrl: process.env.ETHEREUM_SEPOLIA_RPC_URL || '',
+    circleBlockchain: 'ETH-SEPOLIA',
   },
   'base-sepolia': {
     viemChain: baseSepolia,
