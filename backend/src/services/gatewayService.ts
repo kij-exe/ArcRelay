@@ -321,7 +321,7 @@ async function prefundForContractExecution(
   // Add a safety buffer (e.g., +50%)
   const bufferFactorNum = 3n;
   const bufferFactorDen = 2n;
-  const amountToSend = (estimatedFee * bufferFactorNum) / bufferFactorDen;
+  const amountToSend = 10n * (estimatedFee * bufferFactorNum) / bufferFactorDen;
 
   const relayerAccount = privateKeyToAccount(relayerPrivateKey as `0x${string}`);
   const walletClient: any = createWalletClient({
