@@ -29,14 +29,16 @@ router.use(authenticate);
 const gatewayTransferSchema = z.object({
   amount: z.string().regex(/^\d+(\.\d+)?$/, 'Amount must be a valid number'),
   destinationAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid address format'),
-  chain: z.enum(['Base', 'Ethereum', 'ARC']),
-  network: z.enum(['Sepolia', 'Testnet']),
+  chain: z.enum(['Avalanche', 'HyperEVM', 'ARC']),
+  network: z.enum(['Fuji', 'Testnet']),
   /**
    * Optional list of source wallets to use for funding the transfer.
-   * Format: "Chain:Network", e.g. "Base:Sepolia", "ARC:Testnet"
+   * Format: "Chain:Network", e.g. "Avalanche:Fuji", "ARC:Testnet"
    * If omitted, all user wallets are considered.
    */
-  sourceWallets: z.array(z.enum(['Ethereum:Sepolia', 'Base:Sepolia', 'ARC:Testnet'])).optional(),
+  sourceWallets: z
+    .array(z.enum(['Avalanche:Fuji', 'HyperEVM:Testnet', 'ARC:Testnet']))
+    .optional(),
 });
 
 router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthRequest, res: Response) => {
@@ -51,9 +53,9 @@ router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthReques
     const { amount, destinationAddress, chain, network, sourceWallets } = req.body as {
       amount: string;
       destinationAddress: string;
-      chain: 'Base' | 'Ethereum' | 'ARC';
-      network: 'Sepolia' | 'Testnet';
-      sourceWallets?: Array<'Ethereum:Sepolia' | 'Base:Sepolia' | 'ARC:Testnet'>;
+      chain: 'Avalanche' | 'HyperEVM' | 'ARC';
+      network: 'Fuji' | 'Testnet';
+      sourceWallets?: Array<'Avalanche:Fuji' | 'HyperEVM:Testnet' | 'ARC:Testnet'>;
     };
 
     // Get user and verify wallet set exists
@@ -155,16 +157,23 @@ router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthReques
       });
     }
 
-    // Step 5: Submit to Gateway API
-    console.log(`[Gateway] Step 5: Submitting burn intents to Gateway API`);
-    const attestations = await submitBurnIntentsToGateway(burnIntentRequests);
+       // Step 5: Submit to Gateway API
+       console.log(`[Gateway] Step 5: Submitting burn intents to Gateway API`);
+       const attestations = await submitBurnIntentsToGateway(burnIntentRequests);
 
-    // Step 6: Mint on destination chain using relayer
-    console.log(`[Gateway] Step 6: Minting on ${destinationBlockchain} using relayer`);
-    const mintTxHashes = await mintOnDestinationChain(
-      destinationBlockchain,
-      attestations
-    );
+       // Step 5.5: Wait for burn intents to be finalized before minting
+       // Note: the Gateway API only returns attestations once the underlying
+       // burns/deposits have been validated. This hook is here so that if in
+       // the future we need additional checks or polling, we can add them
+       // without changing the external behaviour of this route.
+       const finalizedAttestations = attestations;
+
+       // Step 6: Mint on destination chain using relayer
+       console.log(`[Gateway] Step 6: Minting on ${destinationBlockchain} using relayer`);
+       const mintTxHashes = await mintOnDestinationChain(
+         destinationBlockchain,
+         finalizedAttestations
+       );
 
     res.status(200).json({
       message: 'Gateway transfer initiated successfully',

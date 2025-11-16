@@ -16,13 +16,12 @@ interface AuthenticatedRequest extends Request {
 const router = Router();
 router.use(authenticate);
 
-// Supported blockchains - automatically create wallets for all
-// Keep this in sync with GATEWAY_DOMAIN_CONFIGS in gatewayService
-const SUPPORTED_BLOCKCHAINS = [
-  'ETH-SEPOLIA',
-  'BASE-SEPOLIA',
-  'ARC-TESTNET',
-] as const;
+// Supported blockchains for *developer-controlled wallets*.
+// Note: as of now Circle's Developer-Controlled Wallets API does not
+// support creating wallets on HyperEVM Testnet, so we only create
+// wallets on chains that are actually supported by that API.
+// HyperEVM is still supported on the Gateway side as a destination.
+const SUPPORTED_BLOCKCHAINS = ['AVAX-FUJI', 'ARC-TESTNET'] as const;
 
 /**
  * Build a single wallet info object including USDC balance (if available)
