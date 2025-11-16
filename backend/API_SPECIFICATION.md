@@ -143,7 +143,9 @@ Wallets are automatically created for:
 #### Get User Wallets
 **GET** `/wallets`
 
-Retrieves wallet information and USDC balances for the authenticated user.
+Retrieves wallet information and aggregated USDC balances for the authenticated user.
+
+Each user has one Circle wallet per supported blockchain: `ETH-SEPOLIA`, `BASE-SEPOLIA`, and `ARC-TESTNET`.
 
 **Headers:**
 ```
@@ -167,7 +169,7 @@ Authorization: Bearer <token>
       "state": "LIVE",
       "createDate": "2024-01-01T12:04:05Z",
       "updateDate": "2024-01-01T12:04:05Z",
-      "usdcBalance": "1000000"
+      "usdcBalance": "10.000000"
     },
     {
       "circleWalletId": "b746e7f9-5318-5f48-c23f-877bgc0c4903",
@@ -176,7 +178,7 @@ Authorization: Bearer <token>
       "state": "LIVE",
       "createDate": "2024-01-01T12:04:05Z",
       "updateDate": "2024-01-01T12:04:05Z",
-      "usdcBalance": "500000"
+      "usdcBalance": "5.250000"
     },
     {
       "circleWalletId": "c857f8ga-6429-6g59-d34g-988chd1d5a14",
@@ -190,6 +192,17 @@ Authorization: Bearer <token>
   ]
 }
 ```
+
+**Field details:**
+- `walletSet`: Circle wallet set metadata (`id`, `createDate`, `updateDate`).
+- `walletSetId`: convenience copy of the wallet set ID.
+- `wallets[]`:
+  - `circleWalletId`: Circle wallet ID.
+  - `blockchain`: `ETH-SEPOLIA`, `BASE-SEPOLIA`, or `ARC-TESTNET`.
+  - `address`: EVM address of the wallet.
+  - `state`: `"LIVE"` or `"FROZEN"`.
+  - `createDate`, `updateDate`: wallet timestamps (ISO 8601, UTC).
+  - `usdcBalance`: string, aggregated USDC balance on that chain in human-readable format with up to 6 decimals (e.g. `"10.000000"`), or `null` if no USDC-like tokens are present.
 
 **Error Responses:**
 - `401`: Unauthorized
@@ -259,7 +272,8 @@ Content-Type: application/json
   "amount": "10.5",
   "destinationAddress": "0x1234567890abcdef1234567890abcdef12345678",
   "chain": "Base",
-  "network": "Sepolia"
+  "network": "Sepolia",
+  "sourceWallets": ["Base:Sepolia", "ARC:Testnet"]
 }
 ```
 
@@ -273,6 +287,9 @@ Content-Type: application/json
 - `network` (string, required): Destination network. Supported values:
   - `"Sepolia"` for Ethereum / Base
   - `"Testnet"` for ARC
+- `sourceWallets` (string[], optional): List of source wallets to use for funding the transfer.
+  - Format: `"Chain:Network"`, e.g. `"Base:Sepolia"`, `"ARC:Testnet"`.
+  - If omitted, **all** of the user's wallets are considered when selecting balances.
 
 **Destination chain mapping:**
 - `{ "chain": "Ethereum", "network": "Sepolia" }` → `ETH-SEPOLIA`
