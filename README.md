@@ -69,36 +69,42 @@ You can extend networks in `src/chains/index.ts` and expose them via the facilit
 ## Installation
 
 Prerequisites:
-- Node 18+ (Node 22 works), npm or pnpm
+- Node 18+, npm 
 - Circle API credentials for DCW/Gateway
 
 Install:
 ```
 npm install
-cd frontend && npm install && cd ..
+cd frontend && npm install 
 ```
 
 ## Environment variables
 
-Create `.env` at the repo root (not committed). Examples:
+Create `.env` at the repo root (not committed):
 
 ```
 # Facilitator / Circle
-CIRCLE_API_KEY=...
-CIRCLE_ENTITY_SECRET=...
-CIRCLE_WALLET_SET_ID=...
+```
+CIRCLE_API_KEY=YOUR_API_KEY
+CIRCLE_ENTITY_SECRET=YOUR_ENTITY_SECRET_KEY
+CIRCLE_WALLET_SET_ID=YOUR_WALLET_SET_ID
+CIRCLE_DCW_API_URL=https://api.circle.com
+```
 
 # Proxy paths
+```
 X402_OPENAPI_PATH=backend-client-examples/fastapi/specs/openapi.json
 X402_CONFIG_PATH=backend-client-examples/fastapi/specs/config.json
+```
 
-# RPC URLs and token addresses (examples)
-ETHEREUM_SEPOLIA_RPC_URL=...
+# RPC URLs and token addresses
+```
+ETHEREUM_SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 ETHEREUM_SEPOLIA_USDC_ADDRESS=0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238
 ETHEREUM_SEPOLIA_USDC_NAME=USDC
 ETHEREUM_SEPOLIA_USDC_VERSION=2
 
-BASE_SEPOLIA_RPC_URL=...
+BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
 BASE_SEPOLIA_USDC_ADDRESS=0x036CbD53842c5426634e7929541eC2318f3dCF7e
 BASE_SEPOLIA_USDC_NAME=USDC
 BASE_SEPOLIA_USDC_VERSION=2
@@ -109,32 +115,46 @@ ARC_TESTNET_USDC_NAME=USDC
 ARC_TESTNET_USDC_VERSION=2
 
 AVALANCHE_FUJI_RPC_URL=https://api.avax-test.network/ext/bc/C/rpc
-AVALANCHE_FUJI_USDC_ADDRESS=0x5425890298aed601595a70AB815c96711a31Bc65  # USDC.e
+AVALANCHE_FUJI_USDC_ADDRESS=0x5425890298aed601595a70AB815c96711a31Bc65
 AVALANCHE_FUJI_USDC_NAME=USDC
 AVALANCHE_FUJI_USDC_VERSION=2
 ```
 
-Frontend:
+Frontend - frontend/.env.local:
 ```
-frontend/.env.local
-NEXT_PUBLIC_BACKEND_URL=http://localhost:3000/api   # your backend base
-NEXT_PUBLIC_PROXY_URL=http://localhost:4000         # proxy URL
+# our deployed backend
+NEXT_PUBLIC_BACKEND_URL=http://srv1110170.hstgr.cloud:3000/api   
 ```
 
 ## Running locally
 
-Terminal 1 – Facilitator:
-```
+Facilitator (from root directory): 
+``` 
 npm run facilitator
 ```
-Terminal 2 – Proxy:
+
+Frontend: 
+``` 
+cd frontend
+npm run dev
+```
+
+Proxy (from root directory): 
 ```
 npm run proxy
 ```
-Terminal 3 – Frontend:
+
+API example:
 ```
-cd frontend
-npm run dev
+cd backend-client-examples
+cd fastapi
+pip intall
+uvicorn main:app --host 0.0.0.0 --port 8080 --reload 
+```
+
+Client user script:
+```
+npx tsx scripts/deposit-to-user.ts
 ```
 
 ## Config/Pricing lifecycle
@@ -146,19 +166,12 @@ npm run dev
 
 ## End‑to‑end testing
 
-- Scripted payment (EIP‑3009):
-  ```
-  export PAYER_PK=0x...
-  npx tsx scripts/pay.ts
-  ```
-  The script fetches a 402 from the proxy, builds/signs the payload, and issues the paid request.
-
 - Deposit to a user wallet (testing balances):
   ```
   export PAYER_PK=0x...
   npx tsx scripts/deposit-to-user.ts
   ```
-  On chains with USDC v2 (EIP‑3009), the flow verifies successfully. On Fuji (USDC.e), EIP‑3009 is not supported; use Gateway transfers or implement an ERC‑20 transfer path in the facilitator for deposits.
+  On chains with USDC v2 (EIP‑3009), the flow verifies successfully. Use Gateway transfers or implement an ERC‑20 transfer path in the facilitator for deposits.
 
 ## Withdrawals (Gateway)
 
@@ -187,12 +200,6 @@ npm run dev
 - Proxy: `GET/POST /config` require bearer only (no `X-Admin-Token`).
 - Frontend’s AuthGuard checks local JWT and redirects to `/login` if missing.
 
-## Known limitations / notes
-
-- Avalanche Fuji USDC.e does not support EIP‑3009; settlement via EIP‑3009 will fail signature verification. Use Gateway transfer path for Fuji or switch to Base/Ethereum/Arc for EIP‑3009 tests.
-- `/transactions` or `/dashboard/stats` endpoints are optional. The dashboard derives stats from `/wallets` and proxy `/config` when these are missing.
-- Ensure base URLs (frontend → backend/proxy) do not contain double slashes. The app normalizes URLs, but environment misconfigurations can still cause 404s.
-
 ## Troubleshooting
 
 - 404 on `/auth/*` / double slashes: set `NEXT_PUBLIC_BACKEND_URL` to the `/api` root without trailing slash.
@@ -200,17 +207,3 @@ npm run dev
 - Circle 400 “insufficient funds”: Fund the DCW wallet on the target network or lower the price/amount.
 - “Invalid EIP‑3009 signature”: Verify domain (name/version/chainId/verifyingContract) matches the USDC token on the selected chain; avoid Fuji for EIP‑3009.
 - “Unsupported network”: Ensure envs (RPC/USDC) are set and the facilitator prints the network in “Active facilitator networks”.
-
-## Scripts
-
-- `scripts/pay.ts` – fetch 402, sign EIP‑3009, do a paid call (proxy).
-- `scripts/deposit-to-user.ts` – deposit USDC to a user’s Circle wallet (for testing balances).
-
-## Development notes
-
-- TypeScript executed with `tsx` for ESM convenience.
-- No internal “docs” module; all docs UI was removed from the proxy in favor of this dashboard.
-- Code style emphasizes clarity and explicit naming; lints should pass on changed files.
-
-
-
