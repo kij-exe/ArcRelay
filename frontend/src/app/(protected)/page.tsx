@@ -135,6 +135,7 @@ export default function DashboardPage() {
       "BASE-SEPOLIA": "Base",
       "ETH-SEPOLIA": "Ethereum",
       "ARC-TESTNET": "Arc",
+      "AVAX-FUJI": "Avalanche Fuji",
     };
     return networkMap[network] || network;
   };

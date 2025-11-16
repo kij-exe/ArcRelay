@@ -7,8 +7,6 @@ import {
   LayoutDashboard,
   Tag,
   ArrowDownCircle,
-  BookOpen,
-  Settings,
   Wallet2,
 } from "lucide-react";
 
@@ -16,8 +14,6 @@ const navItems = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "Pricing", href: "/pricing", icon: Tag },
   { label: "Withdraw", href: "/withdraw", icon: ArrowDownCircle },
-  { label: "Docs", href: "/docs", icon: BookOpen },
-  { label: "Settings", href: "/settings", icon: Settings },
 ];
 
 export function Sidebar() {

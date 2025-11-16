@@ -8,21 +8,26 @@ import * as z from "zod";
 import { ArrowDownCircle, Loader2, CheckCircle2, XCircle, ExternalLink } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 
-interface Balance {
-  amount: string;
+interface WalletSet {
+  id: string;
+  createDate: string;
   updateDate: string;
 }
 
-interface WalletBalance {
+interface Wallet {
   circleWalletId: string;
   blockchain: string;
   address: string;
   state: string;
-  balances: Balance[];
+  createDate: string;
+  updateDate: string;
+  usdcBalance: string | null;
 }
 
-interface BalancesResponse {
-  balances: WalletBalance[];
+interface WalletsResponse {
+  walletSet: WalletSet;
+  walletSetId: string;
+  wallets: Wallet[];
 }
 
 // Request shape is constructed inline in the API call
@@ -61,13 +66,17 @@ const SUPPORTED_CHAINS = [
   { value: "ARC-TESTNET", label: "ARC Testnet" },
   { value: "BASE-SEPOLIA", label: "Base Sepolia" },
   { value: "ETH-SEPOLIA", label: "Ethereum Sepolia" },
+  { value: "AVAX-FUJI", label: "Avalanche Fuji" },
 ] as const;
 
 // Ethereum address validation regex (works for all EVM chains)
 const ETHEREUM_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 
+const SUPPORTED_VALUES = ["ARC-TESTNET", "BASE-SEPOLIA", "ETH-SEPOLIA", "AVAX-FUJI"] as const;
 const withdrawalSchema = z.object({
-  destinationChain: z.enum(["ARC-TESTNET", "BASE-SEPOLIA", "ETH-SEPOLIA"]),
+  destinationChain: z
+    .string()
+    .refine((v) => SUPPORTED_VALUES.includes(v as any), { message: "Select a supported chain" }),
   destinationAddress: z
     .string()
     .min(1, "Destination address is required")
@@ -104,20 +113,25 @@ export default function WithdrawPage() {
     return window.localStorage.getItem("arc_token");
   };
 
-  // Fetch aggregated balances
-  const { data: balancesData, isLoading: balancesLoading } = useQuery<BalancesResponse>({
-    queryKey: ["balances"],
+  // Fetch wallets and balances
+  const { data: walletsData, isLoading: walletsLoading, error: walletsError } = useQuery<WalletsResponse>({
+    queryKey: ["wallets"],
     queryFn: async () => {
       const token = getToken();
       if (!token) throw new Error("Not authenticated");
-      return apiFetch<BalancesResponse>("/balances", { token });
+      return apiFetch<WalletsResponse>("/wallets", { token });
     },
+    enabled: !!getToken(), // Only run query if token exists
+    retry: 1,
   });
 
-  // Calculate aggregated USDC balance
-  const aggregatedBalance = balancesData?.balances.reduce((total, wallet) => {
-    const walletBalance = wallet.balances[0]?.amount || "0";
-    return total + parseFloat(walletBalance);
+  // Calculate aggregated USDC balance from all wallets
+  const aggregatedBalance = walletsData?.wallets.reduce((total, wallet) => {
+    // Only add balance if it's not null and the wallet is LIVE
+    if (wallet.usdcBalance && wallet.state === "LIVE") {
+      return total + parseFloat(wallet.usdcBalance);
+    }
+    return total;
   }, 0) || 0;
 
   // Set max amount when balance loads
@@ -128,13 +142,15 @@ export default function WithdrawPage() {
   }, [aggregatedBalance]);
 
   // Transaction history
-  const { data: transactionsData } = useQuery<TransactionsResponse>({
+  const { data: transactionsData, error: transactionsError } = useQuery<TransactionsResponse>({
     queryKey: ["transactions"],
     queryFn: async () => {
       const token = getToken();
       if (!token) throw new Error("Not authenticated");
       return apiFetch<TransactionsResponse>("/transactions", { token });
     },
+    enabled: !!getToken(),
+    retry: 1,
   });
 
   const {
@@ -166,6 +182,8 @@ export default function WithdrawPage() {
       "ARC-TESTNET": { chain: "ARC", network: "Testnet" },
       "BASE-SEPOLIA": { chain: "Base", network: "Sepolia" },
       "ETH-SEPOLIA": { chain: "ETH", network: "Sepolia" },
+      // Backend expects chain 'Avalanche' and network 'Fuji'
+      "AVAX-FUJI": { chain: "Avalanche", network: "Fuji" },
     };
     return chainMap[chainValue] || { chain: "Base", network: "Sepolia" };
   };
@@ -182,8 +200,8 @@ export default function WithdrawPage() {
         amount: data.amount,
         destinationAddress: data.destinationAddress,
         chain,
-        network,
-        // sourceWallets is optional - let the backend select the optimal wallets
+        network
+        //sourceWallets: ["AVAX:Fuji"], //["ARC:Testnet"], // Hardcoded to only use ARC Testnet
       };
 
       return apiFetch<GatewayTransferResponse>("/gateway/transfer", {
@@ -193,7 +211,7 @@ export default function WithdrawPage() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["balances"] });
+      queryClient.invalidateQueries({ queryKey: ["wallets"] });
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       reset();
       setMaxAmount(aggregatedBalance.toFixed(6));
@@ -210,6 +228,7 @@ export default function WithdrawPage() {
       "BASE-SEPOLIA": `https://sepolia.basescan.org/tx/${txHash}`,
       "ETH-SEPOLIA": `https://sepolia.etherscan.io/tx/${txHash}`,
       "ARC-TESTNET": `https://explorer-sepolia.archon.foundation/tx/${txHash}`,
+      "AVAX-FUJI": `https://testnet.snowtrace.io/tx/${txHash}`,
     };
     return chainMap[chain] || null;
   };
@@ -226,10 +245,21 @@ export default function WithdrawPage() {
     return stateMap[state] || { label: state, color: "text-gray-600" };
   };
 
-  if (balancesLoading) {
+  if (walletsLoading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-brand-primary" />
+      </div>
+    );
+  }
+
+  if (walletsError) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-600 mb-2">Error loading wallets:</p>
+          <p className="text-sm text-gray-600">{walletsError.message || String(walletsError)}</p>
+        </div>
       </div>
     );
   }

@@ -558,6 +558,132 @@ app.get("/invoice", (req: Request, res: Response) => {
   res.json(invoice);
 });
 
+// User deposit endpoint - allows deposits directly to user's Circle wallet
+app.post("/deposit/requirements", async (req: Request, res: Response) => {
+  try {
+    const { network, amount, userWalletAddress } = req.body as {
+      network?: SupportedNetwork;
+      amount?: string;
+      userWalletAddress?: Address;
+    };
+
+    if (!userWalletAddress) {
+      res.status(400).json({ error: "User wallet address is required" });
+      return;
+    }
+
+    const resolvedNetwork = network || defaultNetwork;
+    const context = networkContexts[resolvedNetwork];
+    if (!context) {
+      res.status(400).json({ error: "Unsupported network" });
+      return;
+    }
+
+    // Create payment requirements with user's wallet as recipient
+    const requirements: PaymentRequirements = {
+      scheme: "exact",
+      network: resolvedNetwork,
+      token: context.chain.usdcAddress,
+      amount: amount || "1000000", // Default to 1 USDC (6 decimals)
+      recipient: userWalletAddress, // User's Circle wallet address
+      description: `Deposit to user wallet ${userWalletAddress}`,
+      maxTimeoutSeconds: 300,
+    };
+
+    res.json({ paymentRequirements: requirements });
+  } catch (error) {
+    console.error("Error creating deposit requirements:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Process user deposit
+app.post("/deposit/settle", async (req: Request, res: Response) => {
+  try {
+    const body = req.body as SettleRequestBody;
+    const requirements = body.paymentRequirements;
+    const context = requirements ? networkContexts[requirements.network] : undefined;
+
+    if (!requirements) {
+      res.status(400).json({ error: "Missing payment requirements" });
+      return;
+    }
+
+    if (!context) {
+      res.status(400).json({ error: "Unsupported network" });
+      return;
+    }
+
+    // Verify the payment requirements (but skip recipient check for deposits)
+    // Custom validation for deposits - we allow any recipient address
+    if (requirements.scheme !== "exact") {
+      res.status(400).json({ error: "Unsupported payment scheme" });
+      return;
+    }
+
+    if (requirements.token.toLowerCase() !== context.chain.usdcAddress.toLowerCase()) {
+      res.status(400).json({ error: "Unsupported token" });
+      return;
+    }
+
+    if (BigInt(requirements.amount) <= 0) {
+      res.status(400).json({ error: "Amount must be positive" });
+      return;
+    }
+
+    if (!body.paymentPayload) {
+      res.status(400).json({ error: "Missing payment payload" });
+      return;
+    }
+
+    // Verify the authorization signature
+    const { authorization, signature } = await verifyAuthorization(body.paymentPayload, requirements, context);
+
+    // Execute the transfer directly to user's wallet
+    const transactionResponse = await circleClient.createContractExecutionTransaction({
+      walletId: context.circleWallet.id,
+      contractAddress: requirements.token,
+      abiFunctionSignature: TRANSFER_WITH_AUTHORIZATION_SIGNATURE,
+      abiParameters: [
+        authorization.from,     // User's external wallet
+        authorization.to,       // User's Circle wallet address
+        authorization.value,
+        authorization.validAfter,
+        authorization.validBefore,
+        authorization.nonce,
+        signature.v,
+        signature.r,
+        signature.s,
+      ],
+      refId: requirements.description,
+      fee: {
+        type: "level",
+        config: { feeLevel: "MEDIUM" },
+      },
+    });
+
+    const circleTransaction = transactionResponse.data;
+    if (!circleTransaction) {
+      throw new Error("Circle did not return transaction data");
+    }
+
+    res.json({
+      success: true,
+      transactionId: circleTransaction.id,
+      state: circleTransaction.state,
+      amount: authorization.value.toString(),
+      from: authorization.from,
+      to: authorization.to,
+      message: "Deposit initiated successfully"
+    });
+  } catch (error) {
+    console.error("Error processing deposit:", error);
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Failed to process deposit"
+    });
+  }
+});
+
 async function bootstrap(): Promise<void> {
   await initializeNetworkContexts();
 
