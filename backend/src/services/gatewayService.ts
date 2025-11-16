@@ -447,12 +447,12 @@ export async function getWalletUsdcBalance(
   const tokenBalances: any[] = await getWalletTokenBalancesById(wallet.id);
   if (!tokenBalances.length) return null;
 
-  // Look for all tokens whose name contains "USDC"
+  // Look for all tokens whose *symbol* contains "USDC"
   const usdcTokens = tokenBalances.filter((tb: any) => {
     const token = tb.token;
     if (!token) return false;
-    const name = String(token.name || '');
-    return name.toUpperCase().includes('USDC');
+    const symbol = String(token.symbol || '');
+    return symbol.toUpperCase().includes('USDC');
   });
 
   if (!usdcTokens.length) {
