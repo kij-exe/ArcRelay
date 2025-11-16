@@ -67,7 +67,10 @@ router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthReques
 
     // Convert amount to bigint (assuming 6 decimals for USDC)
     const amountBigInt = BigInt(Math.floor(parseFloat(amount) * 1_000_000));
-    const maxFee = amountBigInt + (amountBigInt * 5n / 1000n); // 0.5% fee buffer
+    // Fee buffer: 0.1% of amount (example); this is the *fee* component
+    const feeBuffer = (amountBigInt * 1n) / 1000n;
+    const maxFee = feeBuffer;
+    const totalRequired = amountBigInt + maxFee; // amount + fee
 
     // Resolve destination chain configuration from global map
     const configKey = `${chain}:${network}`;
@@ -108,9 +111,11 @@ router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthReques
       return;
     }
 
-    // Step 2: Select tokens to use
-    console.log(`[Gateway] Step 2: Selecting tokens for transfer of ${amount} USDC`);
-    const selectedTokens = selectTokensForTransfer(balances, amountBigInt);
+    // Step 2: Select tokens to use (must cover amount + fee)
+    console.log(
+      `[Gateway] Step 2: Selecting tokens for transfer of ${amount} USDC (totalRequired=${totalRequired.toString()})`
+    );
+    const selectedTokens = selectTokensForTransfer(balances, totalRequired);
 
     // Step 3: Deposit tokens to Gateway contracts
     console.log(`[Gateway] Step 3: Depositing ${selectedTokens.length} token(s) to Gateway`);
@@ -134,6 +139,9 @@ router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthReques
       const walletAddress = await getWalletAddress(token.walletId);
       
       // Create burn intent
+      // NOTE: burn "value" is the user-facing amount (amountBigInt), while
+      // maxFee covers the additional fee component. We deposit amount+fee,
+      // but only burn the user amount and allow Gateway to charge up to maxFee.
       const burnIntent = createBurnIntent(
         token.blockchain,
         destinationBlockchain,
@@ -141,7 +149,7 @@ router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthReques
         destinationConfig.usdcAddress,
         walletAddress,
         destinationAddress,
-        token.amount,
+        amountBigInt,
         maxFee
       );
 
