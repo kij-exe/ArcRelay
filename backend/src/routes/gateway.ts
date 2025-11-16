@@ -67,10 +67,16 @@ router.post('/transfer', validate(gatewayTransferSchema), async (req: AuthReques
 
     // Convert amount to bigint (assuming 6 decimals for USDC)
     const amountBigInt = BigInt(Math.floor(parseFloat(amount) * 1_000_000));
-    // Fee buffer: 0.1% of amount (example); this is the *fee* component
-    const feeBuffer = (amountBigInt * 1n) / 1000n;
-    const maxFee = feeBuffer;
-    const totalRequired = amountBigInt + maxFee; // amount + fee
+
+    // Fee buffer: choose a conservative fixed minimum plus a relatively large
+    // percentage of the amount so we comfortably exceed Gateway's minimum
+    // required maxFee (which can be ~20% of value on testnets).
+    const minFee = 5_000n; // 0.005 USDC in base units (6 decimals)
+    const percentFee = (amountBigInt * 25n) / 100n; // 25% of amount
+    const maxFee = percentFee > minFee ? percentFee : minFee;
+
+    // Total USDC we must have available/deposited on Gateway: amount + fee
+    const totalRequired = amountBigInt + maxFee;
 
     // Resolve destination chain configuration from global map
     const configKey = `${chain}:${network}`;
