@@ -1,6 +1,10 @@
 import { Router, Response, Request } from 'express';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { circleClient } from '../services/circleClient';
+import {
+  getWalletsForWalletSet,
+  getWalletUsdcBalance,
+} from '../services/gatewayService';
 import { getUserByUuid, updateUserWalletSetId } from '../db/connection';
 
 // Type guard to ensure userUuid exists
@@ -13,7 +17,52 @@ const router = Router();
 router.use(authenticate);
 
 // Supported blockchains - automatically create wallets for all
-const SUPPORTED_BLOCKCHAINS = ['BASE-SEPOLIA', 'ARB-SEPOLIA', 'ARC-TESTNET'] as const;
+// Keep this in sync with GATEWAY_DOMAIN_CONFIGS in gatewayService
+const SUPPORTED_BLOCKCHAINS = [
+  'ETH-SEPOLIA',
+  'BASE-SEPOLIA',
+  'ARC-TESTNET',
+] as const;
+
+/**
+ * Build a single wallet info object including USDC balance (if available)
+ */
+async function buildWalletInfoWithUsdcBalance(wallet: any) {
+  try {
+    let usdcBalance: string | null = null;
+
+    const tokenBalance = await getWalletUsdcBalance(wallet);
+    if (tokenBalance) {
+      const { amount, decimals } = tokenBalance;
+      const factor = 10n ** BigInt(decimals);
+      const integer = amount / factor;
+      const frac = amount % factor;
+      const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');
+      usdcBalance = fracStr ? `${integer.toString()}.${fracStr}` : integer.toString();
+    }
+
+    return {
+      circleWalletId: wallet.id,
+      blockchain: wallet.blockchain,
+      address: wallet.address,
+      state: wallet.state,
+      createDate: wallet.createDate,
+      updateDate: wallet.updateDate,
+      usdcBalance,
+    };
+  } catch (err) {
+    console.error(`Error fetching USDC balance for wallet ${wallet.id}:`, err);
+    return {
+      circleWalletId: wallet.id,
+      blockchain: wallet.blockchain,
+      address: wallet.address,
+      state: wallet.state,
+      createDate: wallet.createDate,
+      updateDate: wallet.updateDate,
+      usdcBalance: null as string | null,
+    };
+  }
+}
 
 router.post('/create', async (req: AuthRequest, res: Response) => {
   try {
@@ -106,22 +155,17 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       id: user.circle_wallet_set_id,
     });
 
-    // Get all wallets in the wallet set
-    const walletsResponse = await circleClient.listWallets({
-      walletSetId: user.circle_wallet_set_id,
-    });
+    // Get all wallets in the wallet set (with balances) via shared helper
+    const wallets = await getWalletsForWalletSet(user.circle_wallet_set_id);
+
+    const walletsWithBalance = await Promise.all(
+      wallets.map((wallet) => buildWalletInfoWithUsdcBalance(wallet)),
+    );
 
     res.json({
       walletSet: walletSetResponse.data?.walletSet || null,
       walletSetId: user.circle_wallet_set_id,
-      wallets: walletsResponse.data?.wallets?.map(wallet => ({
-        circleWalletId: wallet.id,
-        blockchain: wallet.blockchain,
-        address: wallet.address,
-        state: wallet.state,
-        createDate: wallet.createDate,
-        updateDate: wallet.updateDate,
-      })) || [],
+      wallets: walletsWithBalance,
     });
   } catch (error) {
     console.error('Get wallets error:', error);

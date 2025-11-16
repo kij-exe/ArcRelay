@@ -5,6 +5,7 @@ import authRoutes from './routes/auth';
 import walletRoutes from './routes/wallets';
 import balanceRoutes from './routes/balances';
 import transactionRoutes from './routes/transactions';
+import gatewayRoutes from './routes/gateway';
 import { errorHandler } from './middleware/errorHandler';
 
 dotenv.config();
@@ -24,6 +25,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/wallets', walletRoutes);
 app.use('/api/balances', balanceRoutes);
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/gateway', gatewayRoutes);
 
 app.use(errorHandler);
 
